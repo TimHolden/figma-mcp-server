@@ -1,6 +1,6 @@
 import fetch from 'node-fetch';
 import debug from 'debug';
-import { ResourceContent } from '@modelcontextprotocol/sdk';
+import { ResourceContents } from '@modelcontextprotocol/sdk/types';
 
 import { ResourceHandler, FigmaResource } from '../types.js';
 import { validateUri } from '../middleware/auth.js';
@@ -58,7 +58,7 @@ export class FigmaResourceHandler implements ResourceHandler {
     return resources;
   }
 
-  async read(uri: string): Promise<ResourceContent[]> {
+  async read(uri: string): Promise<ResourceContents[]> {
     const { type, fileKey, resourceId } = validateUri(uri);
     log('Reading Figma resource:', { type, fileKey, resourceId });
 

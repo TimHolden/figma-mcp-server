@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { ResourceContent } from '@modelcontextprotocol/sdk';
+import { ResourceContents } from '@modelcontextprotocol/sdk/types';
 
 export type FigmaFile = {
   key: string;
@@ -36,7 +36,7 @@ export type FigmaResource = {
 
 export type ResourceHandler = {
   list: () => Promise<FigmaResource[]>;
-  read: (uri: string) => Promise<ResourceContent[]>;
+  read: (uri: string) => Promise<ResourceContents[]>;
   watch?: (uri: string) => Promise<void>;
   search?: (query: string) => Promise<FigmaResource[]>;
 };
