@@ -12,10 +12,28 @@ function createSchema<T extends z.ZodRawShape>(method: string, schema: z.ZodObje
   });
 };
 
-const fileIdSchema = createSchema("figma/files/get", z.object({
+// File schemas
+const fileGetSchema = createSchema("figma/files/get", z.object({
   fileId: z.string()
 }));
 
+const fileVariablesSchema = createSchema("figma/files/variables", z.object({
+  fileId: z.string()
+}));
+
+const fileVariableCollectionsSchema = createSchema("figma/files/variable_collections", z.object({
+  fileId: z.string()
+}));
+
+const fileCommentsSchema = createSchema("figma/files/comments", z.object({
+  fileId: z.string()
+}));
+
+const fileVersionsSchema = createSchema("figma/files/versions", z.object({
+  fileId: z.string()
+}));
+
+// Other schemas
 const exportSchema = createSchema("figma/files/export", z.object({
   fileId: z.string(),
   format: z.string().optional(),
@@ -81,34 +99,6 @@ const collectionUpdateSchema = createSchema("figma/variables/collections/update"
 
 dotenv.config();
 
-// Variable collection interface
-interface VariableCollection {
-    id: string;
-    name: string;
-    variableIds: string[];
-    defaultModeId: string;
-    modeIds: string[];
-    remote: boolean;
-}
-
-// Variable interface
-interface Variable {
-    id: string;
-    name: string;
-    key: string;
-    resolvedType: string;
-    description: string;
-    hiddenFromPublishing: boolean;
-    scopes: string[];
-    codeSyntax: {
-        web: string;
-        android: string;
-        ios: string;
-    };
-    remote: boolean;
-    value: any;
-}
-
 class FigmaAPIServer {
     private server: Server;
     private figmaToken: string;
@@ -121,7 +111,10 @@ class FigmaAPIServer {
             version: "1.0.0",
         }, {
             capabilities: {
-                resources: {},
+                resources: {
+                    subscribe: true,
+                    listChanged: true
+                },
                 commands: {},
                 events: {}
             }
@@ -151,7 +144,7 @@ class FigmaAPIServer {
 
     private setupAPIHandlers() {
         // Files API
-        this.server.setRequestHandler(fileIdSchema, async (request) => {
+        this.server.setRequestHandler(fileGetSchema, async (request) => {
             const { fileId } = request.params;
             return await this.figmaRequest('GET', `/files/${fileId}`);
         });
@@ -178,7 +171,7 @@ class FigmaAPIServer {
         });
 
         // Comments API
-        this.server.setRequestHandler(fileIdSchema, async (request) => {
+        this.server.setRequestHandler(fileCommentsSchema, async (request) => {
             const { fileId } = request.params;
             return await this.figmaRequest('GET', `/files/${fileId}/comments`);
         });
@@ -192,7 +185,7 @@ class FigmaAPIServer {
         });
 
         // File versions
-        this.server.setRequestHandler(fileIdSchema, async (request) => {
+        this.server.setRequestHandler(fileVersionsSchema, async (request) => {
             const { fileId } = request.params;
             return await this.figmaRequest('GET', `/files/${fileId}/versions`);
         });
@@ -220,13 +213,13 @@ class FigmaAPIServer {
 
     private setupVariableHandlers() {
         // Get all variable collections in a file
-        this.server.setRequestHandler(fileIdSchema, async (request) => {
+        this.server.setRequestHandler(fileVariableCollectionsSchema, async (request) => {
             const { fileId } = request.params;
             return await this.figmaRequest('GET', `/files/${fileId}/variable_collections`);
         });
 
         // Get variables in a file
-        this.server.setRequestHandler(fileIdSchema, async (request) => {
+        this.server.setRequestHandler(fileVariablesSchema, async (request) => {
             const { fileId } = request.params;
             return await this.figmaRequest('GET', `/files/${fileId}/variables`);
         });
@@ -273,12 +266,6 @@ class FigmaAPIServer {
         this.server.setRequestHandler(collectionUpdateSchema, async (request) => {
             const { fileId, collectionId, ...updates } = request.params;
             return await this.figmaRequest('PUT', `/files/${fileId}/variable_collections/${collectionId}`, updates);
-        });
-
-        // Delete variable collection
-        this.server.setRequestHandler(modeSchema, async (request) => {
-            const { fileId, collectionId } = request.params;
-            return await this.figmaRequest('DELETE', `/files/${fileId}/variable_collections/${collectionId}`);
         });
     }
 
