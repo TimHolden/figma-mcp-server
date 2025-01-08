@@ -29,7 +29,13 @@ figma-mcp-server/
 │   ├── types.ts         # TypeScript types & interfaces
 │   ├── schemas.ts       # Zod validation schemas
 │   ├── errors.ts        # Error handling
+│   ├── handlers/        # Resource handlers
+│   │   ├── file.ts     # File resource handler
+│   │   ├── component.ts # Component resource handler
+│   │   └── variable.ts  # Variable resource handler
 │   └── middleware/      # Server middleware
+│       ├── auth.ts      # Authentication middleware
+│       └── rate-limit.ts# Rate limiting middleware
 ├── tests/
 │   └── api.test.ts      # API tests
 └── package.json
@@ -52,6 +58,8 @@ npm install
 2. Configure the server (optional):
    ```bash
    export MCP_SERVER_PORT=3000
+   export RATE_LIMIT_REQUESTS=500  # Requests per 15 minutes
+   export DEBUG=figma-mcp:*        # Enable debug logging
    ```
 
 ## Usage
@@ -59,6 +67,7 @@ npm install
 ### Starting the Server
 
 ```bash
+npm run build
 npm run start
 ```
 
@@ -98,40 +107,11 @@ const client = new Client({
 
 await client.connect(transport);
 
-// List available Figma resources
+// Example operations
 const resources = await client.request(
   { method: "resources/list" },
   ListResourcesResultSchema
 );
-
-// Read a specific Figma file
-const fileContent = await client.request(
-  {
-    method: "resources/read",
-    params: {
-      uri: "figma:///file/key"
-    }
-  },
-  ReadResourceResultSchema
-);
-
-// Watch for file changes
-const watcher = await client.request(
-  {
-    method: "resources/watch",
-    params: {
-      uri: "figma:///file/key"
-    }
-  },
-  WatchResourceResultSchema
-);
-
-// Handle resource updates
-client.on("notification", (notification) => {
-  if (notification.method === "resources/changed") {
-    console.log("Resource changed:", notification.params);
-  }
-});
 ```
 
 ## Resource URIs
@@ -145,15 +125,71 @@ The server implements a custom `figma:///` URI scheme for accessing Figma resour
 - Teams: `figma:///team/{team_id}`
 - Projects: `figma:///project/{project_id}`
 
-## Supported Operations
+## Error Handling
 
-The server implements the following MCP operations:
+### MCP Protocol Errors
+- `-32700`: Parse error
+- `-32600`: Invalid request
+- `-32601`: Method not found
+- `-32602`: Invalid parameters
+- `-32603`: Internal error
 
-- `resources/list`: List available Figma resources
-- `resources/read`: Read content of Figma resources
-- `resources/watch`: Watch for resource changes
-- `resources/search`: Search across Figma resources
-- `resources/metadata`: Get metadata about resources
+### Resource Errors
+- `100`: Resource not found
+- `101`: Resource access denied
+- `102`: Resource temporarily unavailable
+
+### Figma API Errors
+The server handles Figma API errors and maps them to appropriate MCP error codes:
+
+- `403 Forbidden`: Maps to error code 101 (Resource access denied)
+  ```json
+  {
+    "code": 101,
+    "message": "Access to Figma resource denied",
+    "data": {
+      "figmaError": "Invalid access token"
+    }
+  }
+  ```
+
+- `404 Not Found`: Maps to error code 100 (Resource not found)
+  ```json
+  {
+    "code": 100,
+    "message": "Figma resource not found",
+    "data": {
+      "uri": "figma:///file/invalid_key"
+    }
+  }
+  ```
+
+- `429 Too Many Requests`: Maps to error code 102 (Resource temporarily unavailable)
+  ```json
+  {
+    "code": 102,
+    "message": "Figma API rate limit exceeded",
+    "data": {
+      "retryAfter": 300
+    }
+  }
+  ```
+
+## Rate Limiting
+
+The server implements smart rate limiting to prevent hitting Figma API limits:
+
+- Default limit: 500 requests per 15 minutes
+- Automatic retry handling for rate-limited requests
+- Configurable rate limit via environment variables
+- Rate limit status endpoint: `GET /rate-limit-status`
+
+Rate limit headers are included in responses:
+```http
+X-RateLimit-Limit: 500
+X-RateLimit-Remaining: 486
+X-RateLimit-Reset: 1623456789
+```
 
 ## Development
 
@@ -178,17 +214,27 @@ npm test
 4. Push to the branch (`git push origin feature/amazing-feature`)
 5. Open a Pull Request
 
-## Roadmap
+## Current Status and Roadmap
 
-- [ ] Implement comprehensive test suite
-- [ ] Add support for more Figma API endpoints
-- [ ] Implement caching layer
-- [ ] Add rate limiting
-- [ ] Enhance documentation
-- [ ] Set up CI/CD pipeline
-- [ ] Add WebSocket transport support
-- [ ] Implement resource change notifications
-- [ ] Add plugin system for custom resource handlers
+### Implemented Features
+- [x] Basic MCP server implementation
+- [x] File resource handling
+- [x] Component resource handling
+- [x] Variable resource handling
+- [x] Authentication middleware
+- [x] Rate limiting
+- [x] Error mapping
+- [x] Basic test coverage
+
+### Upcoming Features
+- [ ] WebSocket transport support (In Progress)
+- [ ] Resource change notifications
+- [ ] Caching layer implementation
+- [ ] Plugin system for custom handlers
+- [ ] Enhanced test coverage
+- [ ] Performance optimizations
+- [ ] Batch operation improvements
+- [ ] Documentation expansion
 
 ## Debugging
 
@@ -198,18 +244,11 @@ Enable debug logging by setting the DEBUG environment variable:
 DEBUG=figma-mcp:* npm start
 ```
 
-## Error Handling
-
-The server implements standard MCP error codes:
-
-- `-32700`: Parse error
-- `-32600`: Invalid request
-- `-32601`: Method not found
-- `-32602`: Invalid parameters
-- `-32603`: Internal error
-- `100`: Resource not found
-- `101`: Resource access denied
-- `102`: Resource temporarily unavailable
+Debug namespaces:
+- `figma-mcp:server`: Server operations
+- `figma-mcp:handler`: Resource handlers
+- `figma-mcp:api`: Figma API calls
+- `figma-mcp:rate-limit`: Rate limiting
 
 ## License
 
