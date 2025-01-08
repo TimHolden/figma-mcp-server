@@ -1,5 +1,4 @@
-import { MCPError } from '@modelcontextprotocol/sdk';
-import { InvalidFigmaTokenError } from '../errors.js';
+import { InvalidFigmaTokenError, InvalidUriError } from '../errors.js';
 
 export const validateToken = () => {
   const token = process.env.FIGMA_ACCESS_TOKEN;
