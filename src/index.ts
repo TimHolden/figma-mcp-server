@@ -1,8 +1,12 @@
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from 'zod';
-import axios from 'axios';
+import axios, { AxiosError } from 'axios';
 import dotenv from 'dotenv';
+import { ResourceContents } from '@modelcontextprotocol/sdk/types';
+
+// Load environment variables
+dotenv.config();
 
 // Define Zod schemas for request parameters
 function createSchema<T extends z.ZodRawShape>(method: string, schema: z.ZodObject<T>) {
@@ -10,7 +14,7 @@ function createSchema<T extends z.ZodRawShape>(method: string, schema: z.ZodObje
     method: z.literal(method),
     params: schema
   });
-};
+}
 
 // File schemas
 const fileGetSchema = createSchema("figma/files/get", z.object({
@@ -25,86 +29,37 @@ const fileVariableCollectionsSchema = createSchema("figma/files/variable_collect
   fileId: z.string()
 }));
 
-const fileCommentsSchema = createSchema("figma/files/comments", z.object({
-  fileId: z.string()
+const resourceWatchSchema = createSchema("resources/watch", z.object({
+  uri: z.string()
 }));
 
-const fileVersionsSchema = createSchema("figma/files/versions", z.object({
-  fileId: z.string()
+const resourceCheckSchema = createSchema("resources/check", z.object({
+  uri: z.string()
 }));
 
-// Other schemas
-const exportSchema = createSchema("figma/files/export", z.object({
-  fileId: z.string(),
-  format: z.string().optional(),
-  scale: z.number().optional()
+const resourceListSchema = createSchema("resources/list", z.object({
+  type: z.string().optional()
 }));
 
-const componentSchema = createSchema("figma/components/get", z.object({
-  fileId: z.string(),
-  nodeId: z.string()
-}));
-
-const teamSchema = createSchema("figma/team/components", z.object({
-  teamId: z.string()
-}));
-
-const commentSchema = createSchema("figma/comments/post", z.object({
-  fileId: z.string(),
-  message: z.string(),
-  client_meta: z.any().optional()
-}));
-
-const styleSchema = createSchema("figma/styles/get", z.object({
-  styleId: z.string()
-}));
-
-const projectSchema = createSchema("figma/projects/files", z.object({
-  projectId: z.string()
-}));
-
-const imageSchema = createSchema("figma/images/get", z.object({
-  fileId: z.string(),
-  ids: z.union([z.string(), z.array(z.string())])
-}));
-
-const variableCollectionSchema = createSchema("figma/variables/collections/create", z.object({
-  fileId: z.string(),
-  name: z.string(),
-  variableIds: z.array(z.string()).optional()
-}));
-
-const variableSchema = createSchema("figma/variables/create", z.object({
-  fileId: z.string(),
-  collectionId: z.string(),
-  name: z.string(),
-  resolvedType: z.string(),
-  value: z.any()
-}));
-
-const variableUpdateSchema = createSchema("figma/variables/update", z.object({
-  fileId: z.string(),
-  variableId: z.string()
-}).passthrough());
-
-const modeSchema = createSchema("figma/variables/modes", z.object({
-  fileId: z.string(),
-  collectionId: z.string()
-}));
-
-const collectionUpdateSchema = createSchema("figma/variables/collections/update", z.object({
-  fileId: z.string(),
-  collectionId: z.string()
-}).passthrough());
-
-dotenv.config();
+interface ApiResponse {
+  status: number;
+  data: any;
+  err?: string;
+}
 
 class FigmaAPIServer {
     private server: Server;
     private figmaToken: string;
-    private baseURL = 'https://api.figma.com/v1';
+    private baseURL: string = 'https://api.figma.com/v1';
+    private watchedResources: Map<string, { lastModified: string }> = new Map();
 
     constructor(figmaToken: string) {
+        if (!figmaToken) {
+            throw new Error('FIGMA_ACCESS_TOKEN is required but not provided');
+        }
+        
+        console.log(`Initializing server with token starting with: ${figmaToken.substring(0, 8)}...`);
+        
         this.figmaToken = figmaToken;
         this.server = new Server({
             name: "figma-api-server",
@@ -113,159 +68,173 @@ class FigmaAPIServer {
             capabilities: {
                 resources: {
                     subscribe: true,
-                    listChanged: true
+                    listChanged: true,
+                    list: true,
+                    read: true,
+                    watch: true
                 },
                 commands: {},
                 events: {}
             }
         });
 
-        this.setupAPIHandlers();
-        this.setupVariableHandlers();
+        this.initializeHandlers();
     }
 
     private async figmaRequest(method: string, endpoint: string, data?: any) {
         try {
+            console.log(`Making Figma API request to: ${endpoint}`);
+            
+            // Changed to use only X-Figma-Token header
+            const headers = {
+                'X-Figma-Token': this.figmaToken,
+                'Content-Type': 'application/json'
+            };
+            
+            console.log('Request headers:', {
+                ...headers,
+                'X-Figma-Token': '[REDACTED]'
+            });
+
             const response = await axios({
                 method,
                 url: `${this.baseURL}${endpoint}`,
-                headers: {
-                    'Authorization': `Bearer ${this.figmaToken}`,
-                    'Content-Type': 'application/json'
-                },
-                data
+                headers,
+                data,
+                validateStatus: (status: number) => status < 500
             });
+
+            if (response.status === 403) {
+                console.error('Authentication Error Details:', {
+                    status: response.status,
+                    data: response.data,
+                    message: 'Figma API authentication failed. Please verify your access token and file permissions.'
+                });
+                throw new Error(`Figma API authentication failed: ${(response.data as ApiResponse)?.err || 'Unknown error'}`);
+            }
+            
             return response.data;
         } catch (error) {
-            console.error(`Figma API error: ${endpoint}`, error);
+            if (axios.isAxiosError(error)) {
+                const axiosError = error as AxiosError<ApiResponse>;
+                console.error('Figma API error details:', {
+                    endpoint,
+                    status: axiosError.response?.status,
+                    statusText: axiosError.response?.statusText,
+                    data: axiosError.response?.data,
+                    headers: axiosError.response?.headers
+                });
+
+                if (axiosError.response?.status === 403) {
+                    console.error('Token being used:', this.figmaToken.substring(0, 8) + '...');
+                    throw new Error(`Figma API authentication failed. Token: ${this.figmaToken.substring(0, 8)}...`);
+                }
+            }
             throw error;
         }
     }
 
-    private setupAPIHandlers() {
+    private parseFileId(uri: string): string | null {
+        const match = uri.match(/figma:\/\/\/file\/([^\/]+)/);
+        return match ? match[1] : null;
+    }
+
+    private initializeHandlers() {
         // Files API
         this.server.setRequestHandler(fileGetSchema, async (request) => {
             const { fileId } = request.params;
             return await this.figmaRequest('GET', `/files/${fileId}`);
         });
 
-        // Export files
-        this.server.setRequestHandler(exportSchema, async (request) => {
-            const { fileId, format, scale } = request.params;
-            return await this.figmaRequest('GET', `/images/${fileId}`, {
-                format: format || 'png',
-                scale: scale || 1
-            });
-        });
-
-        // Components API
-        this.server.setRequestHandler(componentSchema, async (request) => {
-            const { fileId, nodeId } = request.params;
-            return await this.figmaRequest('GET', `/components/${fileId}/${nodeId}`);
-        });
-
-        // Team components
-        this.server.setRequestHandler(teamSchema, async (request) => {
-            const { teamId } = request.params;
-            return await this.figmaRequest('GET', `/teams/${teamId}/components`);
-        });
-
-        // Comments API
-        this.server.setRequestHandler(fileCommentsSchema, async (request) => {
-            const { fileId } = request.params;
-            return await this.figmaRequest('GET', `/files/${fileId}/comments`);
-        });
-
-        this.server.setRequestHandler(commentSchema, async (request) => {
-            const { fileId, message, client_meta } = request.params;
-            return await this.figmaRequest('POST', `/files/${fileId}/comments`, {
-                message,
-                client_meta
-            });
-        });
-
-        // File versions
-        this.server.setRequestHandler(fileVersionsSchema, async (request) => {
-            const { fileId } = request.params;
-            return await this.figmaRequest('GET', `/files/${fileId}/versions`);
-        });
-
-        // Styles
-        this.server.setRequestHandler(styleSchema, async (request) => {
-            const { styleId } = request.params;
-            return await this.figmaRequest('GET', `/styles/${styleId}`);
-        });
-
-        // Projects
-        this.server.setRequestHandler(projectSchema, async (request) => {
-            const { projectId } = request.params;
-            return await this.figmaRequest('GET', `/projects/${projectId}/files`);
-        });
-
-        // Image fills
-        this.server.setRequestHandler(imageSchema, async (request) => {
-            const { fileId, ids } = request.params;
-            return await this.figmaRequest('GET', `/images/${fileId}`, {
-                ids: Array.isArray(ids) ? ids.join(',') : ids
-            });
-        });
-    }
-
-    private setupVariableHandlers() {
-        // Get all variable collections in a file
-        this.server.setRequestHandler(fileVariableCollectionsSchema, async (request) => {
-            const { fileId } = request.params;
-            return await this.figmaRequest('GET', `/files/${fileId}/variable_collections`);
-        });
-
-        // Get variables in a file
+        // Variables API
         this.server.setRequestHandler(fileVariablesSchema, async (request) => {
             const { fileId } = request.params;
             return await this.figmaRequest('GET', `/files/${fileId}/variables`);
         });
 
-        // Create a variable collection
-        this.server.setRequestHandler(variableCollectionSchema, async (request) => {
-            const { fileId, name, variableIds = [] } = request.params;
-            return await this.figmaRequest('POST', `/files/${fileId}/variable_collections`, {
-                name,
-                variableIds
-            });
+        // Variable Collections API
+        this.server.setRequestHandler(fileVariableCollectionsSchema, async (request) => {
+            const { fileId } = request.params;
+            return await this.figmaRequest('GET', `/files/${fileId}/variable_collections`);
         });
 
-        // Create a variable
-        this.server.setRequestHandler(variableSchema, async (request) => {
-            const { fileId, collectionId, name, resolvedType, value } = request.params;
-            return await this.figmaRequest('POST', `/files/${fileId}/variables`, {
-                name,
-                resolvedType,
-                collectionId,
-                value
-            });
+        // Resource Watch
+        this.server.setRequestHandler(resourceWatchSchema, async (request) => {
+            const { uri } = request.params;
+            const fileId = this.parseFileId(uri);
+            
+            if (!fileId) {
+                throw new Error('Invalid Figma resource URI');
+            }
+
+            try {
+                const fileData = await this.figmaRequest('GET', `/files/${fileId}`);
+                this.watchedResources.set(uri, {
+                    lastModified: fileData.lastModified
+                });
+
+                return {
+                    uri,
+                    status: 'watching',
+                    _meta: {}
+                };
+            } catch (error) {
+                console.error('Error setting up watch:', error);
+                throw error;
+            }
         });
 
-        // Update a variable
-        this.server.setRequestHandler(variableUpdateSchema, async (request) => {
-            const { fileId, variableId, ...updates } = request.params;
-            return await this.figmaRequest('PUT', `/files/${fileId}/variables/${variableId}`, updates);
+        // Resource Check
+        this.server.setRequestHandler(resourceCheckSchema, async (request) => {
+            const { uri } = request.params;
+            const fileId = this.parseFileId(uri);
+            
+            if (!fileId) {
+                throw new Error('Invalid Figma resource URI');
+            }
+
+            const watched = this.watchedResources.get(uri);
+            if (!watched) {
+                throw new Error('Resource not being watched');
+            }
+
+            try {
+                const fileData = await this.figmaRequest('GET', `/files/${fileId}`);
+                const changed = fileData.lastModified !== watched.lastModified;
+                
+                if (changed) {
+                    this.watchedResources.set(uri, {
+                        lastModified: fileData.lastModified
+                    });
+                }
+
+                return {
+                    uri,
+                    changed,
+                    timestamp: new Date().toISOString(),
+                    _meta: {}
+                };
+            } catch (error) {
+                console.error('Error checking for changes:', error);
+                throw error;
+            }
         });
 
-        // Delete a variable
-        this.server.setRequestHandler(variableUpdateSchema, async (request) => {
-            const { fileId, variableId } = request.params;
-            return await this.figmaRequest('DELETE', `/files/${fileId}/variables/${variableId}`);
-        });
-
-        // Get variable modes
-        this.server.setRequestHandler(modeSchema, async (request) => {
-            const { fileId, collectionId } = request.params;
-            return await this.figmaRequest('GET', `/files/${fileId}/variable_collections/${collectionId}/modes`);
-        });
-
-        // Update variable collection
-        this.server.setRequestHandler(collectionUpdateSchema, async (request) => {
-            const { fileId, collectionId, ...updates } = request.params;
-            return await this.figmaRequest('PUT', `/files/${fileId}/variable_collections/${collectionId}`, updates);
+        // Resource List
+        this.server.setRequestHandler(resourceListSchema, async (request) => {
+            return {
+                tools: [{
+                    name: "figma-file-watcher",
+                    description: "Watches Figma files for changes",
+                    inputSchema: {
+                        type: "object",
+                        properties: {
+                            uri: { type: "string" }
+                        }
+                    }
+                }],
+                _meta: {}
+            };
         });
     }
 
@@ -278,13 +247,24 @@ class FigmaAPIServer {
 
 // Start the server
 async function main() {
-    const figmaToken = process.env.FIGMA_ACCESS_TOKEN;
-    if (!figmaToken) {
-        throw new Error('FIGMA_ACCESS_TOKEN environment variable is required');
-    }
+    try {
+        console.log('Starting Figma MCP server...');
+        console.log('Environment variables loaded:', {
+            FIGMA_ACCESS_TOKEN: process.env.FIGMA_ACCESS_TOKEN ? 'Present' : 'Missing',
+            NODE_ENV: process.env.NODE_ENV
+        });
 
-    const server = new FigmaAPIServer(figmaToken);
-    await server.start();
+        const figmaToken = process.env.FIGMA_ACCESS_TOKEN;
+        if (!figmaToken) {
+            throw new Error('FIGMA_ACCESS_TOKEN environment variable is required');
+        }
+
+        const server = new FigmaAPIServer(figmaToken);
+        await server.start();
+    } catch (error) {
+        console.error('Fatal error starting server:', error);
+        process.exit(1);
+    }
 }
 
 main().catch(console.error);
