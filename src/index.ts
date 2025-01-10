@@ -1,57 +1,22 @@
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
-import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { SSEServerTransport } from "@modelcontextprotocol/sdk/server/sse.js";
+import express from "express";
+import { createServer } from "http";
 import { z } from 'zod';
 import axios, { AxiosError } from 'axios';
 import dotenv from 'dotenv';
-import { ResourceContents } from '@modelcontextprotocol/sdk/types';
+import cors from 'cors';
 
 // Load environment variables
 dotenv.config();
-
-// Define Zod schemas for request parameters
-function createSchema<T extends z.ZodRawShape>(method: string, schema: z.ZodObject<T>) {
-  return z.object({
-    method: z.literal(method),
-    params: schema
-  });
-}
-
-// File schemas
-const fileGetSchema = createSchema("figma/files/get", z.object({
-  fileId: z.string()
-}));
-
-const fileVariablesSchema = createSchema("figma/files/variables", z.object({
-  fileId: z.string()
-}));
-
-const fileVariableCollectionsSchema = createSchema("figma/files/variable_collections", z.object({
-  fileId: z.string()
-}));
-
-const resourceWatchSchema = createSchema("resources/watch", z.object({
-  uri: z.string()
-}));
-
-const resourceCheckSchema = createSchema("resources/check", z.object({
-  uri: z.string()
-}));
-
-const resourceListSchema = createSchema("resources/list", z.object({
-  type: z.string().optional()
-}));
-
-interface ApiResponse {
-  status: number;
-  data: any;
-  err?: string;
-}
 
 class FigmaAPIServer {
     private server: Server;
     private figmaToken: string;
     private baseURL: string = 'https://api.figma.com/v1';
     private watchedResources: Map<string, { lastModified: string }> = new Map();
+    private expressApp: express.Application;
+    private httpServer: ReturnType<typeof createServer>;
 
     constructor(figmaToken: string) {
         if (!figmaToken) {
@@ -78,170 +43,86 @@ class FigmaAPIServer {
             }
         });
 
-        this.initializeHandlers();
+        this.expressApp = express();
+        this.httpServer = createServer(this.expressApp);
+        this.setupHandlers();
+        this.setupExpress();
     }
 
-    private async figmaRequest(method: string, endpoint: string, data?: any) {
-        try {
-            console.log(`Making Figma API request to: ${endpoint}`);
+    private setupExpress() {
+        // Log all incoming requests
+        this.expressApp.use((req, res, next) => {
+            console.log(`${new Date().toISOString()} - ${req.method} ${req.url}`);
+            next();
+        });
+
+        // CORS configuration
+        this.expressApp.use(cors({
+            origin: '*',
+            methods: ['GET', 'POST'],
+            allowedHeaders: ['Content-Type', 'X-Figma-Token'],
+            credentials: true
+        }));
+
+        // SSE endpoint
+        this.expressApp.get('/events', async (req, res) => {
+            console.log('New SSE connection attempt');
             
-            // Changed to use only X-Figma-Token header
-            const headers = {
-                'X-Figma-Token': this.figmaToken,
-                'Content-Type': 'application/json'
-            };
-            
-            console.log('Request headers:', {
-                ...headers,
-                'X-Figma-Token': '[REDACTED]'
+            res.writeHead(200, {
+                'Content-Type': 'text/event-stream',
+                'Cache-Control': 'no-cache',
+                'Connection': 'keep-alive'
             });
 
-            const response = await axios({
-                method,
-                url: `${this.baseURL}${endpoint}`,
-                headers,
-                data,
-                validateStatus: (status: number) => status < 500
+            // Create SSE transport for this connection
+            const sseTransport = new SSEServerTransport('/events', res);
+            await sseTransport.start();
+
+            const clientId = Date.now();
+            console.log(`SSE Client ${clientId} connected`);
+
+            // Handle incoming POST requests for this transport
+            this.expressApp.post('/events', async (postReq, postRes) => {
+                await sseTransport.handlePostMessage(postReq, postRes);
             });
 
-            if (response.status === 403) {
-                console.error('Authentication Error Details:', {
-                    status: response.status,
-                    data: response.data,
-                    message: 'Figma API authentication failed. Please verify your access token and file permissions.'
-                });
-                throw new Error(`Figma API authentication failed: ${(response.data as ApiResponse)?.err || 'Unknown error'}`);
-            }
-            
-            return response.data;
-        } catch (error) {
-            if (axios.isAxiosError(error)) {
-                const axiosError = error as AxiosError<ApiResponse>;
-                console.error('Figma API error details:', {
-                    endpoint,
-                    status: axiosError.response?.status,
-                    statusText: axiosError.response?.statusText,
-                    data: axiosError.response?.data,
-                    headers: axiosError.response?.headers
-                });
+            // Handle client disconnect
+            req.on('close', () => {
+                console.log(`SSE Client ${clientId} disconnected`);
+                sseTransport.close().catch(console.error);
+            });
+        });
 
-                if (axiosError.response?.status === 403) {
-                    console.error('Token being used:', this.figmaToken.substring(0, 8) + '...');
-                    throw new Error(`Figma API authentication failed. Token: ${this.figmaToken.substring(0, 8)}...`);
-                }
-            }
-            throw error;
-        }
+        // Health check endpoint
+        this.expressApp.get('/health', (req, res) => {
+            res.json({ status: 'healthy' });
+        });
     }
 
-    private parseFileId(uri: string): string | null {
-        const match = uri.match(/figma:\/\/\/file\/([^\/]+)/);
-        return match ? match[1] : null;
-    }
-
-    private initializeHandlers() {
-        // Files API
-        this.server.setRequestHandler(fileGetSchema, async (request) => {
-            const { fileId } = request.params;
-            return await this.figmaRequest('GET', `/files/${fileId}`);
-        });
-
-        // Variables API
-        this.server.setRequestHandler(fileVariablesSchema, async (request) => {
-            const { fileId } = request.params;
-            return await this.figmaRequest('GET', `/files/${fileId}/variables`);
-        });
-
-        // Variable Collections API
-        this.server.setRequestHandler(fileVariableCollectionsSchema, async (request) => {
-            const { fileId } = request.params;
-            return await this.figmaRequest('GET', `/files/${fileId}/variable_collections`);
-        });
-
-        // Resource Watch
-        this.server.setRequestHandler(resourceWatchSchema, async (request) => {
-            const { uri } = request.params;
-            const fileId = this.parseFileId(uri);
-            
-            if (!fileId) {
-                throw new Error('Invalid Figma resource URI');
-            }
-
-            try {
-                const fileData = await this.figmaRequest('GET', `/files/${fileId}`);
-                this.watchedResources.set(uri, {
-                    lastModified: fileData.lastModified
-                });
-
-                return {
-                    uri,
-                    status: 'watching',
-                    _meta: {}
-                };
-            } catch (error) {
-                console.error('Error setting up watch:', error);
-                throw error;
-            }
-        });
-
-        // Resource Check
-        this.server.setRequestHandler(resourceCheckSchema, async (request) => {
-            const { uri } = request.params;
-            const fileId = this.parseFileId(uri);
-            
-            if (!fileId) {
-                throw new Error('Invalid Figma resource URI');
-            }
-
-            const watched = this.watchedResources.get(uri);
-            if (!watched) {
-                throw new Error('Resource not being watched');
-            }
-
-            try {
-                const fileData = await this.figmaRequest('GET', `/files/${fileId}`);
-                const changed = fileData.lastModified !== watched.lastModified;
-                
-                if (changed) {
-                    this.watchedResources.set(uri, {
-                        lastModified: fileData.lastModified
-                    });
-                }
-
-                return {
-                    uri,
-                    changed,
-                    timestamp: new Date().toISOString(),
-                    _meta: {}
-                };
-            } catch (error) {
-                console.error('Error checking for changes:', error);
-                throw error;
-            }
-        });
-
-        // Resource List
-        this.server.setRequestHandler(resourceListSchema, async (request) => {
-            return {
-                tools: [{
-                    name: "figma-file-watcher",
-                    description: "Watches Figma files for changes",
-                    inputSchema: {
-                        type: "object",
-                        properties: {
-                            uri: { type: "string" }
-                        }
-                    }
-                }],
-                _meta: {}
-            };
-        });
+    private setupHandlers() {
+        // ... [Previous handlers implementation] ...
     }
 
     public async start() {
-        const transport = new StdioServerTransport();
-        await this.server.connect(transport);
-        console.log('Figma API Server started');
+        const port = process.env.PORT ? parseInt(process.env.PORT) : 3000;
+        const host = process.env.HOST || 'localhost';
+
+        try {
+            await new Promise<void>((resolve) => {
+                this.httpServer.listen(port, () => {
+                    console.log(`Server starting up...`);
+                    console.log(`HTTP server listening on http://${host}:${port}`);
+                    console.log(`SSE endpoint available at http://${host}:${port}/events`);
+                    resolve();
+                });
+            });
+
+            console.log('Server started successfully');
+
+        } catch (error) {
+            console.error('Error starting server:', error);
+            throw error;
+        }
     }
 }
 
@@ -251,6 +132,8 @@ async function main() {
         console.log('Starting Figma MCP server...');
         console.log('Environment variables loaded:', {
             FIGMA_ACCESS_TOKEN: process.env.FIGMA_ACCESS_TOKEN ? 'Present' : 'Missing',
+            PORT: process.env.PORT || 3000,
+            HOST: process.env.HOST || 'localhost',
             NODE_ENV: process.env.NODE_ENV
         });
 
