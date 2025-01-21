@@ -31,6 +31,12 @@ interface FigmaVariable {
     description?: string;
 }
 
+interface VariableUpdate {
+    variableId: string;
+    value: string;
+    description?: string;
+}
+
 interface CreateVariablesResponse {
     id: string;
     name: string;
@@ -157,6 +163,8 @@ export class FigmaHandler {
     async callTool(name: string, args: unknown) {
         try {
             switch (name) {
+                case "update_variables":
+                    return await this.updateVariables(args);
                 case "create_variables":
                     return await this.createVariables(args);
                 case "get-file":
@@ -318,6 +326,64 @@ export class FigmaHandler {
                     errorMessage = 'Access denied. Please verify your Figma access token has write permissions.';
                 } else {
                     errorMessage = `Error creating variables: ${error.message}`;
+                }
+            }
+            return {
+                isError: true,
+                content: [{
+                    type: "text",
+                    text: errorMessage
+                }]
+            };
+        }
+    }
+
+    async updateVariables(args: unknown) {
+        const { UpdateVariablesSchema } = require('./figma-tools');
+        const { fileKey, updates } = UpdateVariablesSchema.parse(args);
+
+        try {
+            // Get existing variables to validate updates
+            const variables = await this.makeFigmaRequest(`/files/${fileKey}/variables`);
+            
+            // Process updates
+            const results = await Promise.all(
+                updates.map(async (update: VariableUpdate) => {
+                    const variable = variables.find((v: any) => v.id === update.variableId);
+                    if (!variable) {
+                        return `Variable ${update.variableId} not found`;
+                    }
+
+                    try {
+                        await this.makeFigmaRequest(`/files/${fileKey}/variables/${update.variableId}`, {
+                            method: 'PATCH',
+                            body: JSON.stringify({
+                                value: update.value,
+                                ...(update.description && { description: update.description })
+                            })
+                        });
+                        return `Updated ${variable.name}`;
+                    } catch (error) {
+                        return `Failed to update ${variable.name}: ${error instanceof Error ? error.message : 'Unknown error'}`;
+                    }
+                })
+            );
+
+            return {
+                content: [{
+                    type: "text",
+                    text: `Variable update results:\n${results.map(r => `- ${r}`).join('\n')}`
+                }]
+            };
+        } catch (error) {
+            let errorMessage = 'Failed to update variables';
+            if (error instanceof Error) {
+                if (error.message.includes('404')) {
+                    errorMessage = `File not found: ${fileKey}`;
+                } else if (error.message.includes('403')) {
+                    errorMessage = 'Access denied. Please verify your Figma access token has write permissions.';
+                } else {
+                    errorMessage = `Error updating variables: ${error.message}`;
                 }
             }
             return {
