@@ -4,6 +4,56 @@ import { z } from 'zod';
 // Tool definitions
 export const FIGMA_TOOLS: Tool[] = [
     {
+        name: "create_theme",
+        description: "Create a theme with variable mode configurations",
+        inputSchema: {
+            type: "object",
+            properties: {
+                fileKey: {
+                    type: "string",
+                    description: "Figma file key"
+                },
+                name: {
+                    type: "string",
+                    description: "Theme name"
+                },
+                modes: {
+                    type: "array",
+                    description: "Array of mode configurations",
+                    items: {
+                        type: "object",
+                        properties: {
+                            name: {
+                                type: "string",
+                                description: "Mode name (e.g., 'light', 'dark')"
+                            },
+                            variables: {
+                                type: "array",
+                                description: "Variable values for this mode",
+                                items: {
+                                    type: "object",
+                                    properties: {
+                                        variableId: {
+                                            type: "string",
+                                            description: "ID of the variable to configure"
+                                        },
+                                        value: {
+                                            type: "string",
+                                            description: "Value for this mode"
+                                        }
+                                    },
+                                    required: ["variableId", "value"]
+                                }
+                            }
+                        },
+                        required: ["name", "variables"]
+                    }
+                }
+            },
+            required: ["fileKey", "name", "modes"]
+        }
+    },
+    {
         name: "delete_variables",
         description: "Delete variables from a Figma file",
         inputSchema: {
@@ -196,4 +246,20 @@ export const DeleteVariablesSchema = z.object({
     fileKey: z.string(),
     variableIds: z.array(z.string()),
     softDelete: z.boolean().optional().default(false)
+});
+
+export const CreateThemeSchema = z.object({
+    fileKey: z.string(),
+    name: z.string(),
+    modes: z.array(
+        z.object({
+            name: z.string(),
+            variables: z.array(
+                z.object({
+                    variableId: z.string(),
+                    value: z.string()
+                })
+            )
+        })
+    )
 });

@@ -23,6 +23,19 @@ interface FigmaError {
     endpoint?: string;
 }
 
+interface ThemeMode {
+    name: string;
+    variables: Array<{
+        variableId: string;
+        value: string;
+    }>;
+}
+
+interface ThemeConfig {
+    name: string;
+    modes: ThemeMode[];
+}
+
 interface FigmaVariable {
     name: string;
     type: 'COLOR' | 'FLOAT' | 'STRING';
@@ -163,6 +176,8 @@ export class FigmaHandler {
     async callTool(name: string, args: unknown) {
         try {
             switch (name) {
+                case "create_theme":
+                    return await this.createTheme(args);
                 case "delete_variables":
                     return await this.deleteVariables(args);
                 case "update_variables":
@@ -441,6 +456,85 @@ export class FigmaHandler {
                     errorMessage = 'Access denied. Please verify your Figma access token has write permissions.';
                 } else {
                     errorMessage = `Error deleting variables: ${error.message}`;
+                }
+            }
+            return {
+                isError: true,
+                content: [{
+                    type: "text",
+                    text: errorMessage
+                }]
+            };
+        }
+    }
+
+    async createTheme(args: unknown) {
+        const { CreateThemeSchema } = require('./figma-tools');
+        const { fileKey, name, modes } = CreateThemeSchema.parse(args);
+
+        try {
+            // Create a collection for the theme
+            const collection = await this.makeFigmaRequest(`/files/${fileKey}/variables/create-collection`, {
+                method: 'POST',
+                body: JSON.stringify({
+                    name: name,
+                    variableTypes: ["COLOR", "FLOAT", "STRING"] // Support all variable types
+                })
+            });
+
+            // Process each mode
+            const results = await Promise.all(
+                modes.map(async (mode: ThemeMode) => {
+                    try {
+                        // Create the mode in the collection
+                        await this.makeFigmaRequest(`/files/${fileKey}/variables/modes`, {
+                            method: 'POST',
+                            body: JSON.stringify({
+                                collectionId: collection.id,
+                                name: mode.name
+                            })
+                        });
+
+                        // Apply variable values for this mode
+                        const modeUpdates = await Promise.all(
+                            mode.variables.map(async (varConfig) => {
+                                try {
+                                    await this.makeFigmaRequest(`/files/${fileKey}/variables/${varConfig.variableId}/modes`, {
+                                        method: 'PATCH',
+                                        body: JSON.stringify({
+                                            mode: mode.name,
+                                            value: varConfig.value
+                                        })
+                                    });
+                                    return `Set ${varConfig.variableId} for mode ${mode.name}`;
+                                } catch (error) {
+                                    return `Failed to set ${varConfig.variableId} for mode ${mode.name}: ${error instanceof Error ? error.message : 'Unknown error'}`;
+                                }
+                            })
+                        );
+
+                        return `Created mode ${mode.name}:\n${modeUpdates.map(msg => `  - ${msg}`).join('\n')}`;
+                    } catch (error) {
+                        return `Failed to create mode ${mode.name}: ${error instanceof Error ? error.message : 'Unknown error'}`;
+                    }
+                })
+            );
+
+            return {
+                content: [{
+                    type: "text",
+                    text: `Created theme "${name}" with modes:\n${results.map(r => r).join('\n')}`
+                }]
+            };
+        } catch (error) {
+            let errorMessage = 'Failed to create theme';
+            if (error instanceof Error) {
+                if (error.message.includes('404')) {
+                    errorMessage = `File not found: ${fileKey}`;
+                } else if (error.message.includes('403')) {
+                    errorMessage = 'Access denied. Please verify your Figma access token has write permissions.';
+                } else {
+                    errorMessage = `Error creating theme: ${error.message}`;
                 }
             }
             return {
