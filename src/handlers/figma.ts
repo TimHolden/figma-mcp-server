@@ -163,6 +163,8 @@ export class FigmaHandler {
     async callTool(name: string, args: unknown) {
         try {
             switch (name) {
+                case "delete_variables":
+                    return await this.deleteVariables(args);
                 case "update_variables":
                     return await this.updateVariables(args);
                 case "create_variables":
@@ -384,6 +386,61 @@ export class FigmaHandler {
                     errorMessage = 'Access denied. Please verify your Figma access token has write permissions.';
                 } else {
                     errorMessage = `Error updating variables: ${error.message}`;
+                }
+            }
+            return {
+                isError: true,
+                content: [{
+                    type: "text",
+                    text: errorMessage
+                }]
+            };
+        }
+    }
+
+    async deleteVariables(args: unknown) {
+        const { DeleteVariablesSchema } = require('./figma-tools');
+        const { fileKey, variableIds, softDelete } = DeleteVariablesSchema.parse(args);
+
+        try {
+            // Get existing variables to validate deletions
+            const variables = await this.makeFigmaRequest(`/files/${fileKey}/variables`);
+            
+            // Process deletions
+            const results = await Promise.all(
+                variableIds.map(async (id: string) => {
+                    const variable = variables.find((v: any) => v.id === id);
+                    if (!variable) {
+                        return `Variable ${id} not found`;
+                    }
+
+                    try {
+                        await this.makeFigmaRequest(`/files/${fileKey}/variables/${id}`, {
+                            method: 'DELETE',
+                            body: JSON.stringify({ softDelete })
+                        });
+                        return `Deleted ${variable.name}${softDelete ? ' (soft delete)' : ''}`;
+                    } catch (error) {
+                        return `Failed to delete ${variable.name}: ${error instanceof Error ? error.message : 'Unknown error'}`;
+                    }
+                })
+            );
+
+            return {
+                content: [{
+                    type: "text",
+                    text: `Variable deletion results:\n${results.map(r => `- ${r}`).join('\n')}`
+                }]
+            };
+        } catch (error) {
+            let errorMessage = 'Failed to delete variables';
+            if (error instanceof Error) {
+                if (error.message.includes('404')) {
+                    errorMessage = `File not found: ${fileKey}`;
+                } else if (error.message.includes('403')) {
+                    errorMessage = 'Access denied. Please verify your Figma access token has write permissions.';
+                } else {
+                    errorMessage = `Error deleting variables: ${error.message}`;
                 }
             }
             return {
