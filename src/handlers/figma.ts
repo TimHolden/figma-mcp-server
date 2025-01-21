@@ -3,24 +3,102 @@ import { LRUCache } from 'lru-cache';
 import { z } from 'zod';
 import { ListToolsRequestSchema, CallToolRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 
+interface FigmaApiCallStats {
+    lastApiCallTime: number;
+    totalApiCalls: number;
+    failedApiCalls: number;
+    rateLimitRemaining: number | null;
+    rateLimitReset: number | null;
+    apiResponseTimes: number[];
+    lastError?: {
+        time: number;
+        message: string;
+        endpoint: string;
+    };
+}
+
 interface FigmaError {
     message: string;
-    errors?: Array<{
-        path: string[];
-        message: string;
-    }>;
+    status?: number;
+    endpoint?: string;
 }
+
+type StatsCallback = (stats: Partial<FigmaApiCallStats>) => void;
 
 export class FigmaHandler {
     protected cache: LRUCache<string, any>;
     protected figmaToken: string;
+    protected statsCallback?: StatsCallback;
+    protected rateLimitRemaining: number | null = null;
+    protected rateLimitReset: number | null = null;
 
-    constructor(figmaToken: string) {
+    constructor(figmaToken: string, statsCallback?: StatsCallback) {
         this.figmaToken = figmaToken;
+        this.statsCallback = statsCallback;
         this.cache = new LRUCache({
             max: 500,
             ttl: 1000 * 60 * 5 // 5 minutes
         });
+    }
+
+    private updateStats(stats: Partial<FigmaApiCallStats>) {
+        if (this.statsCallback) {
+            this.statsCallback(stats);
+        }
+    }
+
+    private async makeFigmaRequest(endpoint: string): Promise<any> {
+        const startTime = Date.now();
+        let responseTime: number;
+
+        try {
+            const response = await fetch(`https://api.figma.com/v1${endpoint}`, {
+                headers: {
+                    'X-Figma-Token': this.figmaToken
+                }
+            });
+            
+            responseTime = Date.now() - startTime;
+            
+            // Update rate limit info
+            this.rateLimitRemaining = Number(response.headers.get('x-rate-limit-remaining')) || null;
+            const resetTime = response.headers.get('x-rate-limit-reset');
+            this.rateLimitReset = resetTime ? Number(new Date(resetTime)) : null;
+            
+            if (!response.ok) {
+                throw new Error(`Figma API error: ${response.status} ${response.statusText}`);
+            }
+
+            const data = await response.json();
+            
+            // Update stats for successful request
+            this.updateStats({
+                lastApiCallTime: Date.now(),
+                totalApiCalls: 1,
+                apiResponseTimes: [responseTime],
+                rateLimitRemaining: this.rateLimitRemaining,
+                rateLimitReset: this.rateLimitReset
+            });
+
+            return data;
+        } catch (error) {
+            // Update stats for failed request
+            responseTime = Date.now() - startTime;
+            this.updateStats({
+                lastApiCallTime: Date.now(),
+                totalApiCalls: 1,
+                failedApiCalls: 1,
+                apiResponseTimes: [responseTime],
+                rateLimitRemaining: this.rateLimitRemaining,
+                rateLimitReset: this.rateLimitReset,
+                lastError: {
+                    time: Date.now(),
+                    message: error instanceof Error ? error.message : 'Unknown error',
+                    endpoint
+                }
+            });
+            throw error;
+        }
     }
 
     async listTools() {
@@ -78,7 +156,7 @@ export class FigmaHandler {
                     isError: true,
                     content: [{
                         type: "text",
-                        text: `Invalid arguments: ${(error as z.ZodError).errors.map(e => `${e.path.join('.')}: ${e.message}`).join(', ')}`
+                        text: `Invalid arguments: ${error.errors.map(e => `${e.path.join('.')}: ${e.message}`).join(', ')}`
                     }]
                 };
             }
@@ -104,23 +182,8 @@ export class FigmaHandler {
         
         let fileData = this.cache.get(cacheKey);
         if (!fileData) {
-            try {
-                const response = await fetch(`https://api.figma.com/v1/files/${fileKey}`, {
-                    headers: {
-                        'X-Figma-Token': this.figmaToken
-                    }
-                });
-                
-                if (!response.ok) {
-                    throw new Error(`Figma API error: ${response.statusText}`);
-                }
-                
-                fileData = await response.json();
-                this.cache.set(cacheKey, fileData);
-            } catch (error) {
-                const errMsg = error instanceof Error ? error.message : 'Unknown error occurred';
-                throw new Error(`Failed to fetch from Figma API: ${errMsg}`);
-            }
+            fileData = await this.makeFigmaRequest(`/files/${fileKey}`);
+            this.cache.set(cacheKey, fileData);
         }
         
         return {
@@ -141,23 +204,8 @@ export class FigmaHandler {
         
         let filesData = this.cache.get(cacheKey);
         if (!filesData) {
-            try {
-                const response = await fetch(`https://api.figma.com/v1/projects/${projectId}/files`, {
-                    headers: {
-                        'X-Figma-Token': this.figmaToken
-                    }
-                });
-                
-                if (!response.ok) {
-                    throw new Error(`Figma API error: ${response.statusText}`);
-                }
-                
-                filesData = await response.json();
-                this.cache.set(cacheKey, filesData);
-            } catch (error) {
-                const errMsg = error instanceof Error ? error.message : 'Unknown error occurred';
-                throw new Error(`Failed to read Figma resource: ${errMsg}`);
-            }
+            filesData = await this.makeFigmaRequest(`/projects/${projectId}/files`);
+            this.cache.set(cacheKey, filesData);
         }
         
         return {

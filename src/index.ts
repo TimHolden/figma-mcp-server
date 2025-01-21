@@ -1,9 +1,10 @@
 import dotenv from 'dotenv';
 import { startServer } from './server.js';
+import type { MCPServer } from './server.js';
 
 dotenv.config();
 
-const main = async () => {
+const main = async (): Promise<MCPServer> => {
     const figmaToken = process.env.FIGMA_ACCESS_TOKEN;
     if (!figmaToken) {
         throw new Error('FIGMA_ACCESS_TOKEN environment variable is required');
