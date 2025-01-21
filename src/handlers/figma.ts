@@ -180,18 +180,52 @@ export class FigmaHandler {
         const { fileKey } = schema.parse(args);
         const cacheKey = `file:${fileKey}`;
         
-        let fileData = this.cache.get(cacheKey);
-        if (!fileData) {
-            fileData = await this.makeFigmaRequest(`/files/${fileKey}`);
-            this.cache.set(cacheKey, fileData);
+        try {
+            let fileData = this.cache.get(cacheKey);
+            if (!fileData) {
+                fileData = await this.makeFigmaRequest(`/files/${fileKey}`);
+                this.cache.set(cacheKey, fileData);
+            }
+
+            // Format the file data in a more readable way
+            const formattedData = {
+                name: fileData.name,
+                lastModified: fileData.lastModified,
+                version: fileData.version,
+                editorType: fileData.editorType,
+                documentKey: fileData.documentKey,
+                nodes: Object.keys(fileData.document?.children || {}).length + ' nodes',
+                components: Object.keys(fileData.components || {}).length + ' components',
+                styles: Object.keys(fileData.styles || {}).length + ' styles'
+            };
+            
+            return {
+                content: [{
+                    type: "text",
+                    text: `File details for: ${fileData.name}\n\n${Object.entries(formattedData)
+                        .map(([key, value]) => `${key}: ${value}`)
+                        .join('\n')}`
+                }]
+            };
+        } catch (error) {
+            let errorMessage = 'Failed to retrieve Figma file';
+            if (error instanceof Error) {
+                if (error.message.includes('404')) {
+                    errorMessage = `File not found: ${fileKey}. Please verify the file key is correct.`;
+                } else if (error.message.includes('403')) {
+                    errorMessage = 'Access denied. Please verify your Figma access token has the correct permissions.';
+                } else {
+                    errorMessage = `Error accessing file: ${error.message}`;
+                }
+            }
+            return {
+                isError: true,
+                content: [{
+                    type: "text",
+                    text: errorMessage
+                }]
+            };
         }
-        
-        return {
-            content: [{
-                type: "text",
-                text: JSON.stringify(fileData, null, 2)
-            }]
-        };
     }
 
     async listFigmaFiles(args: unknown) {
