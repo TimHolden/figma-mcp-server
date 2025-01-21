@@ -4,6 +4,54 @@ import { z } from 'zod';
 // Tool definitions
 export const FIGMA_TOOLS: Tool[] = [
     {
+        name: "create_reference",
+        description: "Create a reference between variables",
+        inputSchema: {
+            type: "object",
+            properties: {
+                fileKey: {
+                    type: "string",
+                    description: "Figma file key"
+                },
+                sourceId: {
+                    type: "string",
+                    description: "ID of the source variable"
+                },
+                targetId: {
+                    type: "string",
+                    description: "ID of the target variable to reference"
+                },
+                expression: {
+                    type: "string",
+                    description: "Optional expression to transform the referenced value (e.g., '* 0.5' to use half the value)",
+                    default: ""
+                }
+            },
+            required: ["fileKey", "sourceId", "targetId"]
+        }
+    },
+    {
+        name: "validate_references",
+        description: "Check for circular references and validate dependencies",
+        inputSchema: {
+            type: "object",
+            properties: {
+                fileKey: {
+                    type: "string",
+                    description: "Figma file key"
+                },
+                variableIds: {
+                    type: "array",
+                    description: "Optional array of variable IDs to validate. If not provided, validates all variables.",
+                    items: {
+                        type: "string"
+                    }
+                }
+            },
+            required: ["fileKey"]
+        }
+    },
+    {
         name: "create_theme",
         description: "Create a theme with variable mode configurations",
         inputSchema: {
@@ -246,6 +294,18 @@ export const DeleteVariablesSchema = z.object({
     fileKey: z.string(),
     variableIds: z.array(z.string()),
     softDelete: z.boolean().optional().default(false)
+});
+
+export const CreateReferenceSchema = z.object({
+    fileKey: z.string(),
+    sourceId: z.string(),
+    targetId: z.string(),
+    expression: z.string().optional().default("")
+});
+
+export const ValidateReferencesSchema = z.object({
+    fileKey: z.string(),
+    variableIds: z.array(z.string()).optional()
 });
 
 export const CreateThemeSchema = z.object({

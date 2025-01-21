@@ -23,6 +23,21 @@ interface FigmaError {
     endpoint?: string;
 }
 
+interface VariableReference {
+    sourceId: string;
+    targetId: string;
+    expression: string;
+}
+
+interface ReferenceValidation {
+    isValid: boolean;
+    errors: Array<{
+        variableId: string;
+        error: string;
+    }>;
+    dependencies: Map<string, string[]>;
+}
+
 interface ThemeMode {
     name: string;
     variables: Array<{
@@ -176,6 +191,10 @@ export class FigmaHandler {
     async callTool(name: string, args: unknown) {
         try {
             switch (name) {
+                case "create_reference":
+                    return await this.createReference(args);
+                case "validate_references":
+                    return await this.validateReferences(args);
                 case "create_theme":
                     return await this.createTheme(args);
                 case "delete_variables":
@@ -456,6 +475,181 @@ export class FigmaHandler {
                     errorMessage = 'Access denied. Please verify your Figma access token has write permissions.';
                 } else {
                     errorMessage = `Error deleting variables: ${error.message}`;
+                }
+            }
+            return {
+                isError: true,
+                content: [{
+                    type: "text",
+                    text: errorMessage
+                }]
+            };
+        }
+    }
+
+    private buildDependencyGraph(variables: any[]): Map<string, string[]> {
+        const graph = new Map<string, string[]>();
+        
+        variables.forEach(variable => {
+            if (variable.resolvedType === 'VARIABLE_REFERENCE') {
+                const sourceId = variable.id;
+                const targetId = variable.valuesByMode?.default?.referencedVariableId;
+                
+                if (!graph.has(sourceId)) {
+                    graph.set(sourceId, []);
+                }
+                if (targetId) {
+                    graph.get(sourceId)!.push(targetId);
+                }
+            }
+        });
+        
+        return graph;
+    }
+
+    private detectCycles(graph: Map<string, string[]>, start: string, visited = new Set<string>(), path = new Set<string>()): boolean {
+        if (path.has(start)) {
+            return true; // Cycle detected
+        }
+        if (visited.has(start)) {
+            return false; // Already checked this path
+        }
+        
+        visited.add(start);
+        path.add(start);
+        
+        const dependencies = graph.get(start) || [];
+        for (const dep of dependencies) {
+            if (this.detectCycles(graph, dep, visited, path)) {
+                return true;
+            }
+        }
+        
+        path.delete(start);
+        return false;
+    }
+
+    async createReference(args: unknown) {
+        const { CreateReferenceSchema } = require('./figma-tools');
+        const { fileKey, sourceId, targetId, expression } = CreateReferenceSchema.parse(args);
+
+        try {
+            // Validate that both variables exist
+            const variables = await this.makeFigmaRequest(`/files/${fileKey}/variables`);
+            const source = variables.find((v: any) => v.id === sourceId);
+            const target = variables.find((v: any) => v.id === targetId);
+
+            if (!source) {
+                return {
+                    isError: true,
+                    content: [{
+                        type: "text",
+                        text: `Source variable ${sourceId} not found`
+                    }]
+                };
+            }
+
+            if (!target) {
+                return {
+                    isError: true,
+                    content: [{
+                        type: "text",
+                        text: `Target variable ${targetId} not found`
+                    }]
+                };
+            }
+
+            // Create the reference
+            await this.makeFigmaRequest(`/files/${fileKey}/variables/${sourceId}/reference`, {
+                method: 'PUT',
+                body: JSON.stringify({
+                    referencedVariableId: targetId,
+                    expression: expression || undefined
+                })
+            });
+
+            return {
+                content: [{
+                    type: "text",
+                    text: `Created reference from ${source.name} to ${target.name}${expression ? ` with expression: ${expression}` : ''}`
+                }]
+            };
+        } catch (error) {
+            let errorMessage = 'Failed to create reference';
+            if (error instanceof Error) {
+                if (error.message.includes('404')) {
+                    errorMessage = `File not found: ${fileKey}`;
+                } else if (error.message.includes('403')) {
+                    errorMessage = 'Access denied. Please verify your Figma access token has write permissions.';
+                } else {
+                    errorMessage = `Error creating reference: ${error.message}`;
+                }
+            }
+            return {
+                isError: true,
+                content: [{
+                    type: "text",
+                    text: errorMessage
+                }]
+            };
+        }
+    }
+
+    async validateReferences(args: unknown) {
+        const { ValidateReferencesSchema } = require('./figma-tools');
+        const { fileKey, variableIds } = ValidateReferencesSchema.parse(args);
+
+        try {
+            // Get all variables
+            const variables = await this.makeFigmaRequest(`/files/${fileKey}/variables`);
+            
+            // Build dependency graph
+            const graph = this.buildDependencyGraph(variables);
+            
+            // Check for cycles and validate references
+            const results: Array<{ variableId: string; error: string }> = [];
+            const varsToCheck = variableIds || [...graph.keys()];
+
+            for (const varId of varsToCheck) {
+                // Check if variable exists
+                const variable = variables.find((v: any) => v.id === varId);
+                if (!variable) {
+                    results.push({ variableId: varId, error: 'Variable not found' });
+                    continue;
+                }
+
+                // Check for circular references
+                if (this.detectCycles(graph, varId)) {
+                    results.push({ variableId: varId, error: 'Circular reference detected' });
+                }
+
+                // Validate referenced variables exist
+                const dependencies = graph.get(varId) || [];
+                for (const depId of dependencies) {
+                    const dep = variables.find((v: any) => v.id === depId);
+                    if (!dep) {
+                        results.push({ variableId: varId, error: `Referenced variable ${depId} not found` });
+                    }
+                }
+            }
+
+            return {
+                content: [{
+                    type: "text",
+                    text: results.length > 0
+                        ? `Validation issues found:\n${results.map(r => `- ${r.variableId}: ${r.error}`).join('\n')}`
+                        : 'All references are valid'
+                }]
+            };
+        } catch (error) {
+            let errorMessage = 'Failed to validate references';
+            if (error instanceof Error) {
+                if (error.message.includes('404')) {
+                    errorMessage = `File not found: ${fileKey}`;
+                } else if (error.message.includes('403')) {
+                    errorMessage = 'Access denied. Please verify your Figma access token has read permissions.';
+                } else {
+                    errorMessage = `Error validating references: ${error.message}`;
                 }
             }
             return {
