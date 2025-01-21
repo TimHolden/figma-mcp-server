@@ -1,125 +1,170 @@
-import fetch from 'node-fetch';
-import debug from 'debug';
-import { ResourceContents } from '@modelcontextprotocol/sdk/types';
+import { Server } from '@modelcontextprotocol/sdk/server/index.js';
+import { LRUCache } from 'lru-cache';
+import { z } from 'zod';
+import { ListToolsRequestSchema, CallToolRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 
-import { ResourceHandler, FigmaResource } from '../types.js';
-import { validateUri } from '../middleware/auth.js';
-import { ResourceNotFoundError, ResourceAccessDeniedError } from '../errors.js';
+interface FigmaError {
+    message: string;
+    errors?: Array<{
+        path: string[];
+        message: string;
+    }>;
+}
 
-const log = debug('figma-mcp:figma-handler');
+export class FigmaHandler {
+    protected cache: LRUCache<string, any>;
+    protected figmaToken: string;
 
-export class FigmaResourceHandler implements ResourceHandler {
-  private baseUrl = 'https://api.figma.com/v1';
-
-  constructor(private token: string) {}
-
-  private async figmaRequest(path: string): Promise<any> {
-    const response = await fetch(`${this.baseUrl}${path}`, {
-      headers: {
-        'X-Figma-Token': this.token
-      }
-    });
-
-    if (response.status === 404) {
-      throw new ResourceNotFoundError('Figma resource not found');
+    constructor(figmaToken: string) {
+        this.figmaToken = figmaToken;
+        this.cache = new LRUCache({
+            max: 500,
+            ttl: 1000 * 60 * 5 // 5 minutes
+        });
     }
 
-    if (response.status === 403) {
-      throw new ResourceAccessDeniedError('Access to Figma resource denied');
+    async listTools() {
+        return [
+            {
+                name: "get-file",
+                description: "Get details of a Figma file",
+                inputSchema: {
+                    type: "object",
+                    properties: {
+                        fileKey: {
+                            type: "string",
+                            description: "The Figma file key"
+                        }
+                    },
+                    required: ["fileKey"]
+                }
+            },
+            {
+                name: "list-files",
+                description: "List files in a Figma project",
+                inputSchema: {
+                    type: "object",
+                    properties: {
+                        projectId: {
+                            type: "string",
+                            description: "The Figma project ID"
+                        }
+                    },
+                    required: ["projectId"]
+                }
+            }
+        ];
     }
 
-    if (!response.ok) {
-      throw new Error(`Figma API error: ${response.statusText}`);
-    }
+    async callTool(name: string, args: unknown) {
+        try {
+            switch (name) {
+                case "get-file":
+                    return await this.getFigmaFile(args);
+                case "list-files":
+                    return await this.listFigmaFiles(args);
+                default:
+                    return {
+                        isError: true,
+                        content: [{
+                            type: "text",
+                            text: `Unknown tool: ${name}`
+                        }]
+                    };
+            }
+        } catch (error) {
+            if (error instanceof z.ZodError) {
+                return {
+                    isError: true,
+                    content: [{
+                        type: "text",
+                        text: `Invalid arguments: ${(error as z.ZodError).errors.map(e => `${e.path.join('.')}: ${e.message}`).join(', ')}`
+                    }]
+                };
+            }
 
-    return response.json();
-  }
-
-  async list(): Promise<FigmaResource[]> {
-    log('Listing Figma resources');
-    const files = await this.figmaRequest('/files');
-    
-    const resources: FigmaResource[] = [];
-
-    // Add file resources
-    for (const file of files.files) {
-      resources.push({
-        uri: `figma:///file/${file.key}`,
-        type: 'file',
-        name: file.name,
-        metadata: {
-          lastModified: file.lastModified,
-          thumbnailUrl: file.thumbnailUrl,
-          version: file.version
+            const errMsg = error instanceof Error ? error.message : 'Unknown error occurred';
+            return {
+                isError: true,
+                content: [{
+                    type: "text",
+                    text: `Tool execution failed: ${errMsg}`
+                }]
+            };
         }
-      });
     }
 
-    return resources;
-  }
-
-  async read(uri: string): Promise<ResourceContents[]> {
-    const { type, fileKey, resourceId } = validateUri(uri);
-    log('Reading Figma resource:', { type, fileKey, resourceId });
-
-    switch (type) {
-      case 'file': {
-        const file = await this.figmaRequest(`/files/${fileKey}`);
-        return [{
-          uri,
-          mimeType: 'application/json',
-          text: JSON.stringify(file, null, 2)
-        }];
-      }
-
-      case 'component': {
-        if (!resourceId) throw new Error('Component ID required');
-        const component = await this.figmaRequest(`/files/${fileKey}/components/${resourceId}`);
-        return [{
-          uri,
-          mimeType: 'application/json',
-          text: JSON.stringify(component, null, 2)
-        }];
-      }
-
-      case 'variable': {
-        if (!resourceId) throw new Error('Variable ID required');
-        const variable = await this.figmaRequest(`/files/${fileKey}/variables/${resourceId}`);
-        return [{
-          uri,
-          mimeType: 'application/json',
-          text: JSON.stringify(variable, null, 2)
-        }];
-      }
-
-      default:
-        throw new Error(`Unsupported resource type: ${type}`);
+    async getFigmaFile(args: unknown) {
+        const schema = z.object({
+            fileKey: z.string()
+        });
+        
+        const { fileKey } = schema.parse(args);
+        const cacheKey = `file:${fileKey}`;
+        
+        let fileData = this.cache.get(cacheKey);
+        if (!fileData) {
+            try {
+                const response = await fetch(`https://api.figma.com/v1/files/${fileKey}`, {
+                    headers: {
+                        'X-Figma-Token': this.figmaToken
+                    }
+                });
+                
+                if (!response.ok) {
+                    throw new Error(`Figma API error: ${response.statusText}`);
+                }
+                
+                fileData = await response.json();
+                this.cache.set(cacheKey, fileData);
+            } catch (error) {
+                const errMsg = error instanceof Error ? error.message : 'Unknown error occurred';
+                throw new Error(`Failed to fetch from Figma API: ${errMsg}`);
+            }
+        }
+        
+        return {
+            content: [{
+                type: "text",
+                text: JSON.stringify(fileData, null, 2)
+            }]
+        };
     }
-  }
 
-  async search(query: string): Promise<FigmaResource[]> {
-    log('Searching Figma resources:', query);
-    const searchResults = await this.figmaRequest(`/search?query=${encodeURIComponent(query)}`);
-    
-    return searchResults.files.map((file: any) => ({
-      uri: `figma:///file/${file.key}`,
-      type: 'file',
-      name: file.name,
-      metadata: {
-        lastModified: file.lastModified,
-        thumbnailUrl: file.thumbnailUrl
-      }
-    }));
-  }
-
-  async watch(uri: string): Promise<void> {
-    const { type, fileKey } = validateUri(uri);
-    log('Setting up watch for Figma resource:', { type, fileKey });
-
-    // For now, just verify the resource exists
-    if (type === 'file') {
-      await this.figmaRequest(`/files/${fileKey}`);
+    async listFigmaFiles(args: unknown) {
+        const schema = z.object({
+            projectId: z.string()
+        });
+        
+        const { projectId } = schema.parse(args);
+        const cacheKey = `project:${projectId}`;
+        
+        let filesData = this.cache.get(cacheKey);
+        if (!filesData) {
+            try {
+                const response = await fetch(`https://api.figma.com/v1/projects/${projectId}/files`, {
+                    headers: {
+                        'X-Figma-Token': this.figmaToken
+                    }
+                });
+                
+                if (!response.ok) {
+                    throw new Error(`Figma API error: ${response.statusText}`);
+                }
+                
+                filesData = await response.json();
+                this.cache.set(cacheKey, filesData);
+            } catch (error) {
+                const errMsg = error instanceof Error ? error.message : 'Unknown error occurred';
+                throw new Error(`Failed to read Figma resource: ${errMsg}`);
+            }
+        }
+        
+        return {
+            content: [{
+                type: "text",
+                text: JSON.stringify(filesData, null, 2)
+            }]
+        };
     }
-    // Real-time updates would require WebSocket implementation
-  }
 }

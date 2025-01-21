@@ -1,21 +1,31 @@
 import { InvalidFigmaTokenError, InvalidUriError } from '../errors.js';
 
-export const validateToken = () => {
-  const token = process.env.FIGMA_ACCESS_TOKEN;
-  if (!token) {
-    throw new InvalidFigmaTokenError();
-  }
-  return token;
-};
+export class AuthMiddleware {
+    constructor(private figmaToken: string) {}
 
-export const validateUri = (uri: string) => {
-  const match = uri.match(/^figma:\/\/\/(file|component|variable)\/([\w-]+)(\/([\w-]+))?$/);
-  if (!match) {
-    throw new InvalidUriError(uri);
-  }
-  return {
-    type: match[1] as 'file' | 'component' | 'variable',
-    fileKey: match[2],
-    resourceId: match[4]
-  };
-};
+    async validateToken() {
+        if (!this.figmaToken) {
+            throw new InvalidFigmaTokenError('No Figma token provided');
+        }
+
+        try {
+            const response = await fetch('https://api.figma.com/v1/me', {
+                headers: {
+                    'X-Figma-Token': this.figmaToken
+                }
+            });
+
+            if (!response.ok) {
+                throw new InvalidFigmaTokenError('Invalid Figma token');
+            }
+        } catch (error) {
+            throw new InvalidFigmaTokenError('Failed to validate Figma token');
+        }
+    }
+
+    validateUri(uri: string) {
+        if (!uri.startsWith('figma:///')) {
+            throw new InvalidUriError('Invalid Figma URI format');
+        }
+    }
+}

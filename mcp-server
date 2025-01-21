@@ -1,0 +1,18 @@
+#!/usr/bin/env node
+import { createRequire } from 'module';
+const require = createRequire(import.meta.url);
+const path = require('path');
+
+// Get the absolute path to the current directory
+const currentDir = process.cwd();
+
+// Construct the path to dist/index.js relative to the current directory
+const serverPath = path.join(currentDir, 'dist', 'index.js');
+
+console.log('Attempting to start server from:', serverPath);
+
+// Dynamic import of the server module
+import(serverPath).catch(error => {
+    console.error('Failed to load server module:', error);
+    process.exit(1);
+});
