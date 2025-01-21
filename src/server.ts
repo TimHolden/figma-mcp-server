@@ -5,6 +5,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { ListToolsRequestSchema, CallToolRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 import { FigmaHandler } from './handlers/figma.js';
 import { ServerState, ServerStats } from './types.js';
+import { Logger } from './logger.js';
 
 interface ConnectionStats {
     totalRequests: number;
@@ -18,8 +19,8 @@ interface FigmaApiStats {
     totalApiCalls: number;
     failedApiCalls: number;
     averageApiLatency: number;
-    rateLimitRemaining: number | undefined | null;  // Updated to match FigmaHandler stats
-    rateLimitReset: number | undefined | null;      // Updated to match FigmaHandler stats
+    rateLimitRemaining: number | undefined | null;
+    rateLimitReset: number | undefined | null;
     lastError?: {
         message: string;
         time: number;
@@ -39,6 +40,7 @@ export class MCPServer extends EventEmitter {
     private readonly debug: boolean;
     private port?: number;
     private figmaHandler: FigmaHandler;
+    private readonly logger: Logger;
 
     private connectionStats: ConnectionStats = {
         totalRequests: 0,
@@ -66,6 +68,7 @@ export class MCPServer extends EventEmitter {
         this.port = port;
         this.startTime = Date.now();
         this.lastActivityTime = Date.now();
+        this.logger = new Logger(debug);
 
         // Initialize Figma handler with stats callback
         this.figmaHandler = new FigmaHandler(figmaToken, (stats) => {
@@ -168,7 +171,7 @@ export class MCPServer extends EventEmitter {
 
     private handleError(error: Error): void {
         this.connectionErrors++;
-        console.error('Server error:', error);
+        this.logger.error('Server error:', error);
         this.emit('error', error);
     }
 
@@ -176,54 +179,8 @@ export class MCPServer extends EventEmitter {
         this.healthCheckInterval = setInterval(() => {
             const health = this.getHealthStatus();
             
-            const serverSuccessRate = this.connectionStats.totalRequests > 0 
-                ? (this.connectionStats.successfulRequests / this.connectionStats.totalRequests * 100).toFixed(2)
-                : "N/A";
-            
-            const figmaSuccessRate = this.figmaApiStats.totalApiCalls > 0
-                ? ((this.figmaApiStats.totalApiCalls - this.figmaApiStats.failedApiCalls) / 
-                   this.figmaApiStats.totalApiCalls * 100).toFixed(2)
-                : "N/A";
-
             if (this.debug || !health.isHealthy) {
-                console.log('\nHealth Status Report:');
-                console.log('-------------------');
-                console.log(`Server State: ${health.state}`);
-                console.log(`Uptime: ${health.uptime}s`);
-                console.log(`Time Since Last Activity: ${health.lastActivityTime}s`);
-                console.log(`Connection Errors: ${health.connectionErrors}`);
-                console.log(`Healthy: ${health.isHealthy}`);
-                
-                console.log('\nNetwork Status:');
-                console.log(`Local Address: ${health.network.localAddress}`);
-                console.log(`Active Port: ${health.network.activePort}`);
-                console.log(`STDIO Transport: ${health.network.stdioTransportEnabled ? 'Enabled' : 'Disabled'}`);
-                console.log(`SSE Transport: ${health.network.sseTransportEnabled ? 'Enabled' : 'Disabled'}`);
-                
-                console.log('\nConnection Statistics:');
-                console.log(`Total Requests: ${health.connections.totalRequests}`);
-                console.log(`Server Success Rate: ${serverSuccessRate}%`);
-                console.log(`Average Response Time: ${Math.round(health.connections.avgResponseTime)}ms`);
-                console.log(`Peak Memory Usage: ${health.connections.peakMemoryUsage}MB`);
-                
-                console.log('\nFigma API Status:');
-                console.log(`Total API Calls: ${health.figmaApi.totalApiCalls}`);
-                console.log(`API Success Rate: ${figmaSuccessRate}%`);
-                console.log(`Average API Latency: ${Math.round(health.figmaApi.averageApiLatency)}ms`);
-                console.log(`Rate Limit Remaining: ${health.figmaApi.rateLimitRemaining ?? 'Unknown'}`);
-                if (health.figmaApi.rateLimitReset) {
-                    console.log(`Rate Limit Resets: ${new Date(health.figmaApi.rateLimitReset).toLocaleString()}`);
-                }
-                if (health.figmaApi.lastError) {
-                    console.log(`Last Error: ${health.figmaApi.lastError.message}`);
-                    console.log(`Last Error Time: ${new Date(health.figmaApi.lastError.time).toLocaleString()}`);
-                    console.log(`Failed Endpoint: ${health.figmaApi.lastError.endpoint}`);
-                }
-                
-                console.log('\nSystem Status:');
-                console.log(`CPU Usage: ${(health.system.cpuUsage * 100).toFixed(1)}%`);
-                console.log(`Memory: ${health.system.memoryUsage.used}MB used of ${health.system.memoryUsage.total}MB total`);
-                console.log('-------------------');
+                this.logger.log('Health Status:', health);
             }
             
             this.emit('healthUpdate', health);
@@ -244,12 +201,14 @@ export class MCPServer extends EventEmitter {
             this.startHealthCheck();
             
             const initHealth = this.getHealthStatus();
-            console.log('=== Server Health Status ===');
-            console.log(JSON.stringify(initHealth, null, 2));
+            this.logger.info('Server started', {
+                state: initHealth.state,
+                health: initHealth.isHealthy,
+                transport: 'stdio'
+            });
             this.emit('healthUpdate', initHealth);
             
-            console.log('Server started in stdio mode');
-            console.log('Waiting for first activity...');
+            this.logger.log('Initial health status:', initHealth);
         } catch (error) {
             this.state = 'error';
             if (error instanceof Error) {
@@ -274,35 +233,20 @@ export class MCPServer extends EventEmitter {
         this.state = 'stopped';
         
         const finalHealth = this.getHealthStatus();
-        console.log('\n=== Final Server Health Status ===');
-        console.log('Connection Summary:');
-        console.log(`Total Requests Handled: ${this.connectionStats.totalRequests}`);
-        console.log(`Successful Requests: ${this.connectionStats.successfulRequests}`);
-        console.log(`Failed Requests: ${this.connectionStats.failedRequests}`);
+        this.logger.info('Server stopped', {
+            runtime: {
+                uptime: finalHealth.uptime,
+                requests: finalHealth.connections.totalRequests,
+                successRate: (finalHealth.connections.successfulRequests / 
+                            Math.max(finalHealth.connections.totalRequests, 1) * 100).toFixed(2) + '%',
+                errors: this.connectionErrors
+            }
+        });
         
-        console.log('\nFigma API Summary:');
-        console.log(`Total API Calls: ${this.figmaApiStats.totalApiCalls}`);
-        console.log(`Failed API Calls: ${this.figmaApiStats.failedApiCalls}`);
-        console.log(`Average API Latency: ${Math.round(this.figmaApiStats.averageApiLatency)}ms`);
-        
-        console.log('\nNetwork Summary:');
-        console.log(`Active Port: ${this.port || this.defaultPort}`);
-        console.log(`STDIO Transport Active: ${Boolean(this.transport)}`);
-        
-        console.log('\nPerformance Summary:');
-        console.log(`Peak Memory Usage: ${Math.round(this.connectionStats.peakMemoryUsage / (1024 * 1024))}MB`);
-        console.log(`Average Response Time: ${Math.round(this.connectionStats.avgResponseTime)}ms`);
-        console.log(`Total Connection Errors: ${this.connectionErrors}`);
-        console.log(`Total Uptime: ${Math.round((Date.now() - this.startTime) / 1000)}s`);
-        
-        if (finalHealth.figmaApi.lastError) {
-            console.log('\nLast Recorded Error:');
-            console.log(`Time: ${new Date(finalHealth.figmaApi.lastError.time).toLocaleString()}`);
-            console.log(`Message: ${finalHealth.figmaApi.lastError.message}`);
-            console.log(`Endpoint: ${finalHealth.figmaApi.lastError.endpoint}`);
+        if (this.debug) {
+            this.logger.log('Final health status:', finalHealth);
         }
         
-        console.log('\nServer stopped successfully');
         this.emit('healthUpdate', finalHealth);
     }
 }
@@ -312,19 +256,24 @@ export const startServer = async (
     debug = false,
     port = 3000
 ): Promise<MCPServer> => {
-    console.log('\n=== Starting Figma MCP Server ===');
-    console.log(`Version: ${process.env.npm_package_version || '1.0.0'}`);
-    console.log(`Port: ${port}`);
-    console.log(`Debug Mode: ${debug ? 'Enabled' : 'Disabled'}`);
-    console.log(`Platform: ${os.platform()} (${os.release()})`);
-    console.log(`Node Version: ${process.version}`);
+    const logger = new Logger(debug);
+    
+    logger.info('Starting Figma MCP Server', {
+        version: process.env.npm_package_version || '1.0.0',
+        platform: `${os.platform()} (${os.release()})`,
+        nodeVersion: process.version,
+        config: {
+            debug,
+            port
+        }
+    });
     
     try {
         const server = new MCPServer(figmaToken, debug, port);
         await server.start();
         return server;
     } catch (error) {
-        console.error('\nFailed to start server:', error);
+        logger.error('Failed to start server:', error);
         throw error;
     }
 }
