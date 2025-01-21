@@ -23,6 +23,24 @@ interface FigmaError {
     endpoint?: string;
 }
 
+interface FigmaVariable {
+    name: string;
+    type: 'COLOR' | 'FLOAT' | 'STRING';
+    value: string;
+    scope: 'LOCAL' | 'ALL_FRAMES';
+    description?: string;
+}
+
+interface CreateVariablesResponse {
+    id: string;
+    name: string;
+    variables: Array<{
+        id: string;
+        name: string;
+        resolvedType: string;
+    }>;
+}
+
 type StatsCallback = (stats: Partial<FigmaApiCallStats>) => void;
 
 export class FigmaHandler {
@@ -47,15 +65,17 @@ export class FigmaHandler {
         }
     }
 
-    private async makeFigmaRequest(endpoint: string): Promise<any> {
+    private async makeFigmaRequest(endpoint: string, options: RequestInit = {}): Promise<any> {
         const startTime = Date.now();
         let responseTime: number;
 
         try {
             const response = await fetch(`https://api.figma.com/v1${endpoint}`, {
                 headers: {
-                    'X-Figma-Token': this.figmaToken
-                }
+                    'X-Figma-Token': this.figmaToken,
+                    'Content-Type': 'application/json'
+                },
+                ...options
             });
             
             responseTime = Date.now() - startTime;
@@ -137,6 +157,8 @@ export class FigmaHandler {
     async callTool(name: string, args: unknown) {
         try {
             switch (name) {
+                case "create_variables":
+                    return await this.createVariables(args);
                 case "get-file":
                     return await this.getFigmaFile(args);
                 case "list-files":
@@ -248,5 +270,63 @@ export class FigmaHandler {
                 text: JSON.stringify(filesData, null, 2)
             }]
         };
+    }
+
+    async createVariables(args: unknown) {
+        const { CreateVariablesSchema } = require('./figma-tools');
+        const { fileKey, variables } = CreateVariablesSchema.parse(args);
+
+        try {
+            // Create a collection if it doesn't exist
+            const collection = await this.makeFigmaRequest(`/files/${fileKey}/variables/create-collection`, {
+                method: 'POST',
+                body: JSON.stringify({
+                    name: "MCP Generated Variables",
+                    variableTypes: [...new Set(variables.map((v: FigmaVariable) => v.type))]
+                })
+            });
+
+            // Create variables in the collection
+            const createdVariables = await this.makeFigmaRequest(`/files/${fileKey}/variables`, {
+                method: 'POST',
+                body: JSON.stringify({
+                    variableCollectionId: collection.id,
+                    variables: variables.map((v: FigmaVariable) => ({
+                        name: v.name,
+                        resolvedType: v.type,
+                        description: v.description,
+                        value: v.value,
+                        scope: v.scope
+                    }))
+                })
+            });
+
+            return {
+                content: [{
+                    type: "text",
+                    text: `Successfully created ${variables.length} variables:\n${
+                        variables.map((v: FigmaVariable) => `- ${v.name} (${v.type})`).join('\n')
+                    }`
+                }]
+            };
+        } catch (error) {
+            let errorMessage = 'Failed to create variables';
+            if (error instanceof Error) {
+                if (error.message.includes('404')) {
+                    errorMessage = `File not found: ${fileKey}`;
+                } else if (error.message.includes('403')) {
+                    errorMessage = 'Access denied. Please verify your Figma access token has write permissions.';
+                } else {
+                    errorMessage = `Error creating variables: ${error.message}`;
+                }
+            }
+            return {
+                isError: true,
+                content: [{
+                    type: "text",
+                    text: errorMessage
+                }]
+            };
+        }
     }
 }
