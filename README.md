@@ -216,25 +216,233 @@ npm test
 
 ## Current Status and Roadmap
 
+## Quick Start for Designers
+
+1. Get your Figma access token:
+   - Go to Figma.com > Account Settings > Access Tokens
+   - Click "Create new access token"
+   - Copy the token
+
+2. Configure Claude to use the server:
+   - Open Claude Desktop app settings
+   - Navigate to "MCP Settings"
+   - Add a new server with the following configuration:
+   ```json
+   {
+     "mcpServers": {
+       "figma": {
+         "command": "node",
+         "args": ["/path/to/figma-mcp-server/build/index.js"],
+         "env": {
+           "FIGMA_ACCESS_TOKEN": "your_access_token_here"
+         }
+       }
+     }
+   }
+   ```
+
+3. Start using with Claude:
+    ```
+    You can now ask Claude to:
+    - "Create variables for my design system"
+    - "Update the dark mode colors in my theme"
+    - "Add a reference between spacing variables"
+    - "Delete unused variables"
+    ```
+
+## Working with Figma Variables
+
+### Design System Setup
+Ask Claude to help set up a complete design system:
+```
+"Help me create a design system with the following variables:
+- Colors (primary, secondary, accent)
+- Typography (sizes, weights, line heights)
+- Spacing scales
+- Border radii
+- Shadow styles"
+```
+
+### Theme Management
+Create and manage themes with multiple modes:
+```
+"Create a theme with light and dark modes using these color pairs:
+- Background: #FFFFFF / #000000
+- Text: #000000 / #FFFFFF
+- Primary: #0066FF / #66A3FF
+- Secondary: #FF6B6B / #FF9999"
+```
+
+### Variable References
+Set up smart variable relationships:
+```
+"Create these spacing relationships:
+- small = base * 0.5
+- medium = base * 1
+- large = base * 2
+- xlarge = large * 1.5"
+```
+
+### Best Practices
+
+1. Variable Organization:
+   - Use clear naming conventions (e.g., `color.primary.500`)
+   - Group related variables (colors, typography, spacing)
+   - Document variable purposes with descriptions
+
+2. Theme Structure:
+   - Create separate modes for different contexts
+   - Test color combinations for accessibility
+   - Use references to maintain relationships
+
+3. References:
+   - Avoid deep reference chains
+   - Document reference relationships
+   - Validate references to prevent circular dependencies
+
+## Variable Management Tools
+
+### Creating Variables
+```typescript
+// Create new variables
+{
+  "fileKey": "your_file_key",
+  "variables": [
+    {
+      "name": "Primary Color",
+      "type": "COLOR",
+      "value": "#0066FF",
+      "scope": "ALL_FRAMES"
+    },
+    {
+      "name": "Spacing Unit",
+      "type": "FLOAT",
+      "value": "8",
+      "scope": "ALL_FRAMES"
+    }
+  ]
+}
+```
+
+### Updating Variables
+```typescript
+// Update existing variables
+{
+  "fileKey": "your_file_key",
+  "updates": [
+    {
+      "variableId": "variable_id",
+      "value": "#FF0000",
+      "description": "Updated primary color"
+    }
+  ]
+}
+```
+
+### Variable References
+```typescript
+// Create a reference with expression
+{
+  "fileKey": "your_file_key",
+  "sourceId": "spacing_large",
+  "targetId": "spacing_base",
+  "expression": "* 2" // spacing_large will be 2x spacing_base
+}
+```
+
+### Theme Management
+```typescript
+// Create a theme with multiple modes
+{
+  "fileKey": "your_file_key",
+  "name": "Brand Theme",
+  "modes": [
+    {
+      "name": "light",
+      "variables": [
+        {
+          "variableId": "background",
+          "value": "#FFFFFF"
+        }
+      ]
+    },
+    {
+      "name": "dark",
+      "variables": [
+        {
+          "variableId": "background",
+          "value": "#000000"
+        }
+      ]
+    }
+  ]
+}
+```
+
+## Developer Setup
+
+1. Clone and install:
+```bash
+git clone <repository-url>
+cd figma-mcp-server
+npm install
+```
+
+2. Build the server:
+```bash
+npm run build
+```
+
+3. Set up environment:
+```bash
+# Required
+export FIGMA_ACCESS_TOKEN=your_access_token
+
+# Optional
+export MCP_SERVER_PORT=3000
+export RATE_LIMIT_REQUESTS=500
+export DEBUG=figma-mcp:*
+```
+
+4. Configure in Claude:
+   - Add the server configuration to Claude's MCP settings
+   - Test connection using Claude's system prompt
+
+5. Development:
+```bash
+# Watch mode
+npm run dev
+
+# Run tests
+npm test
+
+# Build
+npm run build
+```
+
 ### Implemented Features
 - [x] Basic MCP server implementation
 - [x] File resource handling
 - [x] Component resource handling
-- [x] Variable resource handling
+- [x] Variable management
+  - [x] Create/Update/Delete variables
+  - [x] Variable references with expressions
+  - [x] Circular reference detection
+  - [x] Theme support with multiple modes
+  - [x] Bulk operations
+  - [x] Soft delete with restore
 - [x] Authentication middleware
-- [x] Rate limiting
-- [x] Error mapping
-- [x] Basic test coverage
+- [x] Rate limiting with caching
+- [x] Comprehensive error handling
+- [x] Test coverage
 
 ### Upcoming Features
-- [ ] WebSocket transport support (In Progress)
+- [ ] WebSocket transport support
 - [ ] Resource change notifications
-- [ ] Caching layer implementation
 - [ ] Plugin system for custom handlers
-- [ ] Enhanced test coverage
-- [ ] Performance optimizations
-- [ ] Batch operation improvements
-- [ ] Documentation expansion
+- [ ] Team collaboration features
+- [ ] Asset export automation
+- [ ] Enhanced validation rules
 
 ## Debugging
 
