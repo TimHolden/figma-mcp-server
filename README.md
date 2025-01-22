@@ -214,131 +214,86 @@ The server implements a custom `figma:///` URI scheme for accessing Figma resour
 - Variable support depends on file schema
 
 ### Current API Limitations
-The Figma API currently provides read-only access to variables and components. This means you can:
-- View existing variables and their values
-- List variables used in components
-- Analyze variable relationships
-- Review theme configurations
+The Figma API provides the following capabilities:
 
-But you cannot:
+Read Operations (Supported):
+- Get all variables and their complete definitions
+- Retrieve variable collections and their modes
+- Access component metadata and properties
+- View theme configurations and values
+
+Write Operations (Not Supported):
 - Create new variables
 - Modify existing variables
 - Create or modify themes
+- Update component properties
 - Set up variable references
 
-### Viewing Variables
-Ask Claude to help analyze your design system:
-```
-"Show me all color variables in my file"
-"List variables used in this component"
-"Find all typography variables"
-"Show me theme mode configurations"
-```
-
-### Variable Analysis
-Get insights about your variables:
-```
-"Analyze my variable naming patterns"
-"Show me which components use this variable"
-"Find unused variables"
-"Check variable organization"
-```
-
-### Best Practices
-
-1. Variable Organization:
-   - Review naming conventions
-   - Analyze variable grouping
-   - Check documentation completeness
-
-2. Theme Structure:
-   - Review mode configurations
-   - Analyze color combinations
-   - Check variable relationships
-
-3. Usage Analysis:
-   - Monitor variable usage
-   - Check component dependencies
-   - Review variable scoping
+Note: The API returns complete data structures rather than summary counts. Each request returns the full variable, component, or theme data as defined in the Figma API specification.
 
 ## Available Tools
 
-### Getting Variables
-```typescript
-// Get file variables
-{
-  "method": "get_variables",
-  "params": {
-    "fileKey": "your_file_key"
-  }
-}
+### API Response Examples
 
-// Response includes:
+#### Getting Variables
+```typescript
+// GET /v1/files/:file_key/variables
 {
-  "variables": [
-    {
-      "id": "variable_id",
-      "name": "Primary Color",
-      "type": "COLOR",
-      "value": "#0066FF",
-      "scope": "ALL_FRAMES",
-      "description": "Main brand color"
-    }
-  ]
+  status: number,
+  meta: {
+    variables: Array<{
+      id: string,
+      name: string,
+      key: string,
+      variableCollectionId: string,
+      resolvedType: 'FLOAT' | 'STRING' | 'COLOR' | 'BOOLEAN',
+      description: string,
+      hiddenFromPublishing: boolean,
+      scopes: Array<'ALL_SCOPES' | 'TEXT_CONTENT' | 'CORNER_RADIUS' | 'WIDTH_HEIGHT'>,
+    }>,
+    collections: Array<{
+      id: string,
+      name: string,
+      key: string,
+      modes: Array<{
+        modeId: string,
+        name: string,
+        variableValues: Record<string, any>
+      }>,
+      defaultModeId: string,
+      remote: boolean,
+      hiddenFromPublishing: boolean
+    }>
+  }
 }
 ```
 
-### Variable Usage
+#### Getting Components
 ```typescript
-// Get variable usage in components
+// GET /v1/files/:file_key/components
 {
-  "method": "get_variable_usage",
-  "params": {
-    "fileKey": "your_file_key",
-    "variableId": "variable_id"
+  status: number,
+  meta: {
+    components: Array<{
+      key: string,
+      name: string,
+      description: string,
+      remote: boolean,
+      documentationLinks: string[]
+    }>,
+    componentSets: Array<{
+      key: string,
+      name: string,
+      description: string,
+      remote: boolean,
+      documentationLinks: string[],
+      componentPropertyDefinitions: Record<string, {
+        type: string,
+        defaultValue: any,
+        preferredValues?: any[]
+      }>
+    }>
   }
-}
-
-// Response includes:
-{
-  "components": [
-    {
-      "id": "component_id",
-      "name": "Button",
-      "usageType": "fill"
-    }
-  ]
-}
-```
-
-### Theme Information
-```typescript
-// Get theme mode configuration
-{
-  "method": "get_theme_modes",
-  "params": {
-    "fileKey": "your_file_key"
-  }
-}
-
-// Response includes:
-{
-  "themes": [
-    {
-      "name": "Brand Theme",
-      "modes": [
-        {
-          "name": "light",
-          "variables": [
-            {
-              "id": "background",
-              "value": "#FFFFFF"
-            }
-          ]
-        }
-      ]
-    }
-  ]
 }
 ```
 
