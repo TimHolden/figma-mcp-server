@@ -1,4 +1,5 @@
 # Figma MCP Server
+[![smithery badge](https://smithery.ai/badge/@TimHolden/figma-mcp-server)](https://smithery.ai/server/@TimHolden/figma-mcp-server)
 
 A TypeScript server implementing the [Model Context Protocol (MCP)](https://modelcontextprotocol.io) for the Figma API, enabling standardized context provision for LLMs.
 
@@ -43,6 +44,15 @@ figma-mcp-server/
 
 ## Installation
 
+### Installing via Smithery
+
+To install Figma Server for Claude Desktop automatically via [Smithery](https://smithery.ai/server/@TimHolden/figma-mcp-server):
+
+```bash
+npx -y @smithery/cli install @TimHolden/figma-mcp-server --client claude
+```
+
+### Manual Installation
 ```bash
 npm install @modelcontextprotocol/sdk
 npm install
