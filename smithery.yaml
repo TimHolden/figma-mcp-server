@@ -1,0 +1,29 @@
+# Smithery configuration file: https://smithery.ai/docs/deployments
+
+startCommand:
+  type: stdio
+  configSchema:
+    # JSON Schema defining the configuration options for the MCP.
+    type: object
+    required:
+      - figmaAccessToken
+    properties:
+      figmaAccessToken:
+        type: string
+        description: The API access token for Figma.
+      serverPort:
+        type: number
+        default: 3000
+        description: Port on which the server will run.
+      rateLimitRequests:
+        type: number
+        default: 500
+        description: Maximum number of requests per 15 minutes.
+      debug:
+        type: string
+        default: figma-mcp:*
+        description: Debug namespace for logging.
+  commandFunction:
+    # A function that produces the CLI command to start the MCP on stdio.
+    |-
+    config => ({ command: 'node', args: ['dist/index.js'], env: { FIGMA_ACCESS_TOKEN: config.figmaAccessToken, PORT: config.serverPort.toString(), RATE_LIMIT_REQUESTS: config.rateLimitRequests.toString(), DEBUG: config.debug } })
