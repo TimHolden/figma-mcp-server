@@ -20,6 +20,38 @@ This server provides MCP-compliant access to Figma resources, allowing LLM appli
   - Token validation and API integration
   - Caching and rate limiting
 
+### Current Implementation Limitations
+
+1. Response Data Constraints
+- Node data limited to summary counts
+- Component data shows count without details
+- Style information limited to total numbers
+- Detailed information requires multiple API calls
+
+2. Performance Considerations
+- Large files may experience slower response times
+- Detailed information requires sequential API requests
+- Rate limiting affects data retrieval speed
+- Cache invalidation may impact response times
+
+3. Platform Compatibility
+- Some features require newer Figma file versions
+- Variable support depends on file schema version
+- Component structure varies by file version
+- Team library components may have limited visibility
+
+4. Known Edge Cases
+- Files with many nodes may timeout
+- Component-heavy files return limited data
+- Complex variable relationships may be incomplete
+- Partial data access based on permissions
+
+5. Performance Bottlenecks
+- Initial responses limited to summary counts
+- Detailed data requires multiple round trips
+- Memory usage increases with response size
+- Rate limits affect data completeness
+
 ## Project Structure
 
 ```
@@ -160,6 +192,26 @@ The server implements a custom `figma:///` URI scheme for accessing Figma resour
     ```
 
 ## Working with Figma Variables
+
+### API Response Limitations
+
+1. Summary Data Only
+- Initial responses contain count information
+- Detailed node information requires additional requests
+- Component properties limited in first response
+- Style details need separate API calls
+
+2. Request Optimization
+- Consider implementing pagination for large datasets
+- Use selective data retrieval when possible
+- Cache frequently accessed information
+- Plan for rate limit handling
+
+3. Data Accessibility
+- Some properties may be hidden based on permissions
+- Team library access affects available data
+- File version impacts available features
+- Variable support depends on file schema
 
 ### Current API Limitations
 The Figma API currently provides read-only access to variables and components. This means you can:
