@@ -1,0 +1,4 @@
+#!/bin/bash
+cd /Users/TimHolden/Desktop/Claude-Access/figma-mcp-server
+git fetch origin
+git checkout -b review-pr5 origin/pr/5

@@ -93,6 +93,7 @@ export class MCPServer extends EventEmitter {
             }
         });
 
+        // Initialize server with stricter error handling
         this.server = new Server(
             {
                 name: "figma-mcp-server",
@@ -104,6 +105,20 @@ export class MCPServer extends EventEmitter {
                 }
             }
         );
+        
+        // Set up global error handler for proper JSON-RPC error responses
+        this.server.onerror = (error: unknown) => {
+            this.logger.error('Global error handler caught:', error);
+            // Ensure error is properly formatted for JSON-RPC
+            return {
+                code: -32603, // Internal error
+                message: error instanceof Error ? error.message : 'Unknown server error',
+                data: {
+                    timestamp: Date.now(),
+                    errorType: error instanceof Error ? error.constructor.name : typeof error
+                }
+            };
+        };
 
         // Set up request handlers
         this.server.setRequestHandler(ListToolsRequestSchema, async () => {
@@ -189,11 +204,25 @@ export class MCPServer extends EventEmitter {
 
     public async start(): Promise<void> {
         try {
+            // Initialize transport with enhanced error handling
             this.transport = new StdioServerTransport();
             
-            // Set up transport error handling
+            // Set up comprehensive transport error handling
             this.transport.onerror = (error: Error) => {
+                this.logger.error('Transport error:', error);
                 this.handleError(error);
+            };
+            
+            // Add message validation and handling
+            this.transport.onmessage = (message: any) => {
+                try {
+                    // Validate that message is proper JSON-RPC
+                    if (!message || (typeof message !== 'object')) {
+                        this.logger.error('Invalid message received:', message);
+                    }
+                } catch (err) {
+                    this.logger.error('Error in message handler:', err);
+                }
             };
 
             await this.server.connect(this.transport);
@@ -204,7 +233,9 @@ export class MCPServer extends EventEmitter {
             this.logger.info('Server started', {
                 state: initHealth.state,
                 health: initHealth.isHealthy,
-                transport: 'stdio'
+                transport: 'stdio',
+                protocol: 'MCP 1.0',
+                capabilities: ['tools']
             });
             this.emit('healthUpdate', initHealth);
             
@@ -212,7 +243,13 @@ export class MCPServer extends EventEmitter {
         } catch (error) {
             this.state = 'error';
             if (error instanceof Error) {
+                this.logger.error('Failed to start server:', error.message, {
+                    stack: error.stack,
+                    name: error.name
+                });
                 this.handleError(error);
+            } else {
+                this.logger.error('Failed to start server with unknown error type:', error);
             }
             throw error;
         }

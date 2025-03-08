@@ -104,10 +104,22 @@ export class FigmaHandler {
         let responseTime: number;
 
         try {
+            // Validate request parameters
+            if (!endpoint) {
+                throw new Error('Empty endpoint provided to Figma API request');
+            }
+            
+            if (!this.figmaToken) {
+                throw new Error('No Figma access token provided. Please set FIGMA_ACCESS_TOKEN environment variable.');
+            }
+            
+            // Make request with enhanced error handling
             const response = await fetch(`https://api.figma.com/v1${endpoint}`, {
                 headers: {
                     'X-Figma-Token': this.figmaToken,
-                    'Content-Type': 'application/json'
+                    'Content-Type': 'application/json',
+                    'Accept': 'application/json',
+                    'User-Agent': 'figma-mcp-server/1.0.0'
                 },
                 ...options
             });
@@ -119,11 +131,27 @@ export class FigmaHandler {
             const resetTime = response.headers.get('x-rate-limit-reset');
             this.rateLimitReset = resetTime ? Number(new Date(resetTime)) : null;
             
+            // Handle API errors with specific codes
             if (!response.ok) {
-                throw new Error(`Figma API error: ${response.status} ${response.statusText}`);
+                const errorBody = await response.text();
+                let parsedError = null;
+                try {
+                    parsedError = JSON.parse(errorBody);
+                } catch (e) {
+                    // If not parsable JSON, use text as error message
+                }
+                
+                const errorMessage = parsedError?.message || errorBody || response.statusText;
+                throw new Error(`Figma API error (${response.status}): ${errorMessage}`);
             }
 
-            const data = await response.json();
+            // Safely parse JSON response with error handling
+            let data;
+            try {
+                data = await response.json();
+            } catch (jsonError) {
+                throw new Error(`Failed to parse Figma API response as JSON: ${jsonError instanceof Error ? jsonError.message : 'Unknown JSON parsing error'}`);
+            }
             
             // Update stats for successful request
             this.updateStats({
@@ -138,6 +166,14 @@ export class FigmaHandler {
         } catch (error) {
             // Update stats for failed request
             responseTime = Date.now() - startTime;
+            
+            const errorDetails = {
+                time: Date.now(),
+                message: error instanceof Error ? error.message : 'Unknown error',
+                endpoint,
+                stack: error instanceof Error ? error.stack : undefined
+            };
+            
             this.updateStats({
                 lastApiCallTime: Date.now(),
                 totalApiCalls: 1,
@@ -146,11 +182,18 @@ export class FigmaHandler {
                 rateLimitRemaining: this.rateLimitRemaining,
                 rateLimitReset: this.rateLimitReset,
                 lastError: {
-                    time: Date.now(),
-                    message: error instanceof Error ? error.message : 'Unknown error',
+                    time: errorDetails.time,
+                    message: errorDetails.message,
                     endpoint
                 }
             });
+            
+            // Ensure clean error objects for JSON serialization
+            if (error instanceof Error) {
+                const cleanError = new Error(error.message);
+                cleanError.name = error.name;
+                throw cleanError;
+            }
             throw error;
         }
     }

@@ -157,23 +157,41 @@ The server implements a custom `figma:///` URI scheme for accessing Figma resour
 - Teams: `figma:///team/{team_id}`
 - Projects: `figma:///project/{project_id}`
 
-## Quick Start for Designers
+## Configuring with Claude Desktop
 
-1. Get your Figma access token:
+Follow these steps to properly configure the Figma MCP Server with Claude Desktop:
+
+1. **Get your Figma access token**:
    - Go to Figma.com > Account Settings > Access Tokens
    - Click "Create new access token"
    - Copy the token
 
-2. Configure Claude to use the server:
-   - Open Claude Desktop app settings
-   - Navigate to "MCP Settings"
-   - Add a new server with the following configuration:
+2. **Install the Figma MCP server**:
+   ```bash
+   # Clone the repository
+   git clone https://github.com/TimHolden/figma-mcp-server.git
+   cd figma-mcp-server
+   
+   # Install dependencies
+   npm install
+   
+   # Build the server
+   npm run build
+   ```
+
+3. **Configure Claude Desktop**:
+   - Locate Claude Desktop's configuration file:
+     - macOS: `~/Library/Application Support/Claude/claude_desktop_config.json`
+     - Windows: `%APPDATA%\Claude\claude_desktop_config.json`
+   - Create this file if it doesn't exist
+   - Add the following configuration (using **absolute paths**):
+
    ```json
    {
      "mcpServers": {
        "figma": {
          "command": "node",
-         "args": ["/path/to/figma-mcp-server/build/index.js"],
+         "args": ["/ABSOLUTE/PATH/TO/figma-mcp-server/dist/index.js"],
          "env": {
            "FIGMA_ACCESS_TOKEN": "your_access_token_here"
          }
@@ -182,14 +200,29 @@ The server implements a custom `figma:///` URI scheme for accessing Figma resour
    }
    ```
 
-3. Start using with Claude:
-    ```
-    You can now ask Claude to:
-    - "Show me the variables in my design system"
-    - "List all color variables in dark mode"
-    - "Find components using specific variables"
-    - "Analyze my variable naming conventions"
-    ```
+   > **Important**: Replace `/ABSOLUTE/PATH/TO` with the actual full path to your server directory. On Windows, use double backslashes (`\\`) in paths.
+
+4. **Restart Claude Desktop**:
+   - Close and reopen Claude Desktop completely
+   - Verify the MCP connection by looking for the MCP icon in the input bar
+
+5. **Troubleshooting**:
+   - If connection fails, check logs at:
+     - macOS: `~/Library/Logs/Claude/mcp*.log`
+     - Windows: `%APPDATA%\Claude\logs\mcp*.log`
+   - Common issues:
+     - Invalid paths (must be absolute)
+     - Missing environment variables
+     - Incorrect JSON format in config file
+
+6. **Start using with Claude**:
+   ```
+   You can now ask Claude to:
+   - "Show me the variables in my design system"
+   - "List all color variables in dark mode"
+   - "Find components using specific variables"
+   - "Analyze my variable naming conventions"
+   ```
 
 ## Working with Figma Variables
 
@@ -296,6 +329,14 @@ Note: The API returns complete data structures rather than summary counts. Each 
   }
 }
 ```
+
+## Troubleshooting
+
+If you're experiencing issues connecting to Claude Desktop, see our [Troubleshooting Guide](examples/TROUBLESHOOTING.md) for solutions to common problems.
+
+Example configuration files:
+- [Claude Desktop macOS Config](examples/claude_desktop_config.json)
+- [Claude Desktop Windows Config](examples/claude_desktop_config_windows.json)
 
 ## Developer Setup
 
