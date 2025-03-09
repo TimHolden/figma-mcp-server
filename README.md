@@ -1,262 +1,279 @@
 # Figma MCP Server
 
-A TypeScript server implementing the [Model Context Protocol (MCP)](https://modelcontextprotocol.io) for the Figma API, enabling standardized context provision for LLMs.
+A Model Context Protocol (MCP) server that provides integration with Figma's API through Claude and other MCP-compatible clients. Currently supports read-only access to Figma files and projects, with server-side architecture capable of supporting more advanced design token and theme management features (pending Figma API enhancements or plugin development).
 
-## Overview
+## Project Status
 
-This server provides MCP-compliant access to Figma resources, allowing LLM applications to seamlessly integrate with Figma files, components, and variables. It implements the full MCP specification while providing specialized handlers for Figma's unique resource types.
+### Current Progress
 
-### Key Features
+- ✅ **Core Implementation**: Successfully built a TypeScript server following the Model Context Protocol (MCP)
+- ✅ **Claude Desktop Integration**: Tested and functional with Claude Desktop
+- ✅ **Read Operations**: Working `get-file` and `list-files` tools for Figma file access
+- ✅ **Server Architecture**: Caching system, error handling, and stats monitoring implemented
+- ✅ **Transport Protocols**: Both stdio and SSE transport mechanisms supported
 
-- **MCP Resource Handlers**
-  - Figma files access and manipulation
-  - Variables and components management
-  - Custom URI scheme (figma:///)
-  
-- **Robust Implementation**
-  - Type-safe implementation using TypeScript
-  - Request validation using Zod schemas
-  - Comprehensive error handling
-  - Token validation and API integration
-  - Batch operations support
+### Potential Full Functionality
 
-## Project Structure
+The server has been designed with code to support these features (currently limited by API restrictions):
 
-```
-figma-mcp-server/
-├── src/
-│   ├── index.ts         # Main server implementation
-│   ├── types.ts         # TypeScript types & interfaces
-│   ├── schemas.ts       # Zod validation schemas
-│   ├── errors.ts        # Error handling
-│   ├── handlers/        # Resource handlers
-│   │   ├── file.ts     # File resource handler
-│   │   ├── component.ts # Component resource handler
-│   │   └── variable.ts  # Variable resource handler
-│   └── middleware/      # Server middleware
-│       ├── auth.ts      # Authentication middleware
-│       └── rate-limit.ts# Rate limiting middleware
-├── tests/
-│   └── api.test.ts      # API tests
-└── package.json
-```
+- **Variable Management**: Create, read, update, and delete design tokens (variables)
+- **Reference Handling**: Create and validate relationships between tokens
+- **Theme Management**: Create themes with multiple modes (e.g., light/dark)
+- **Dependency Analysis**: Detect and prevent circular references
+- **Batch Operations**: Perform bulk actions on variables and themes
+
+With Figma plugin development or expanded API access, these features could be fully enabled.
+
+## Features
+
+- 🔑 Secure authentication with Figma API
+- 📁 File operations (read, list)
+- 🎨 Design system management
+  - Variable creation and management
+  - Theme creation and configuration
+  - Reference handling and validation
+- 🚀 Performance optimized
+  - LRU caching
+  - Rate limit handling
+  - Connection pooling
+- 📊 Comprehensive monitoring
+  - Health checks
+  - Usage statistics
+  - Error tracking
+
+## Prerequisites
+
+- Node.js 18.x or higher
+- Figma access token with appropriate permissions
+- Basic understanding of MCP (Model Context Protocol)
 
 ## Installation
 
 ```bash
-npm install @modelcontextprotocol/sdk
-npm install
+npm install figma-mcp-server
 ```
 
 ## Configuration
 
-1. Set up your Figma access token:
-   ```bash
-   export FIGMA_ACCESS_TOKEN=your_access_token
-   ```
+1. Create a `.env` file based on `.env.example`:
 
-2. Configure the server (optional):
-   ```bash
-   export MCP_SERVER_PORT=3000
-   export RATE_LIMIT_REQUESTS=500  # Requests per 15 minutes
-   export DEBUG=figma-mcp:*        # Enable debug logging
-   ```
+```env
+# Figma API Access Token
+FIGMA_ACCESS_TOKEN=your_figma_token
+
+# Server Configuration
+MCP_SERVER_PORT=3000
+
+# Debug Configuration
+DEBUG=figma-mcp:*
+```
+
+2. For Claude Desktop integration:
+
+The server can be configured in your Claude Desktop config file:
+- macOS: `~/Library/Application Support/Claude/claude_desktop_config.json`
+- Windows: `%APPDATA%\Claude\claude_desktop_config.json`
+
+```json
+{
+  "mcpServers": {
+    "figma": {
+      "command": "node",
+      "args": ["/ABSOLUTE/PATH/TO/figma-mcp-server/dist/index.js"],
+      "env": {
+        "FIGMA_ACCESS_TOKEN": "your_token_here"
+      }
+    }
+  }
+}
+```
+
+**Important Notes:**
+- Use ABSOLUTE paths, not relative paths
+- On Windows, use double backslashes (\\\\) in paths
+- Restart Claude Desktop after making configuration changes
 
 ## Usage
 
-### Starting the Server
+### Basic Usage
 
-```bash
-npm run build
-npm run start
+```javascript
+import { startServer } from 'figma-mcp-server';
+
+const server = await startServer(process.env.FIGMA_ACCESS_TOKEN);
 ```
 
-### Using as an MCP Server
+### Available Tools
 
-The server implements the Model Context Protocol, making it compatible with any MCP client. It supports both stdio and SSE transports:
+1. **get-file**
+   - Retrieve Figma file details
+   ```javascript
+   {
+     "name": "get-file",
+     "arguments": {
+       "fileKey": "your_file_key"
+     }
+   }
+   ```
 
-#### stdio Transport
-```bash
-figma-mcp-server < input.jsonl > output.jsonl
-```
+2. **list-files**
+   - List files in a Figma project
+   ```javascript
+   {
+     "name": "list-files",
+     "arguments": {
+       "projectId": "your_project_id"
+     }
+   }
+   ```
 
-#### SSE Transport
-```bash
-figma-mcp-server --transport sse --port 3000
-```
+3. **create-variables**
+   - Create design system variables
+   ```javascript
+   {
+     "name": "create-variables",
+     "arguments": {
+       "fileKey": "your_file_key",
+       "variables": [
+         {
+           "name": "primary-color",
+           "type": "COLOR",
+           "value": "#0066FF"
+         }
+       ]
+     }
+   }
+   ```
 
-### Client Integration
+4. **create-theme**
+   - Create and configure themes
+   ```javascript
+   {
+     "name": "create-theme",
+     "arguments": {
+       "fileKey": "your_file_key",
+       "name": "Dark Theme",
+       "modes": [
+         {
+           "name": "dark",
+           "variables": [
+             {
+               "variableId": "123",
+               "value": "#000000"
+             }
+           ]
+         }
+       ]
+     }
+   }
+   ```
+
+## API Documentation
+
+### Server Methods
+
+- `startServer(figmaToken: string, debug?: boolean, port?: number)`
+  - Initializes and starts the MCP server
+  - Returns: Promise<MCPServer>
+
+### Tool Schemas
+
+All tool inputs are validated using Zod schemas:
 
 ```typescript
-import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
-
-// Initialize the client
-const transport = new StdioClientTransport({
-  command: "path/to/figma-mcp-server",
+const CreateVariablesSchema = z.object({
+  fileKey: z.string(),
+  variables: z.array(z.object({
+    name: z.string(),
+    type: z.enum(['COLOR', 'FLOAT', 'STRING']),
+    value: z.string(),
+    scope: z.enum(['LOCAL', 'ALL_FRAMES'])
+  }))
 });
-
-const client = new Client({
-  name: "figma-client",
-  version: "1.0.0",
-}, {
-  capabilities: {
-    resources: {} // Enable resources capability
-  }
-});
-
-await client.connect(transport);
-
-// Example operations
-const resources = await client.request(
-  { method: "resources/list" },
-  ListResourcesResultSchema
-);
 ```
-
-## Resource URIs
-
-The server implements a custom `figma:///` URI scheme for accessing Figma resources:
-
-- Files: `figma:///file/{file_key}`
-- Components: `figma:///component/{file_key}/{component_id}`
-- Variables: `figma:///variable/{file_key}/{variable_id}`
-- Styles: `figma:///style/{file_key}/{style_id}`
-- Teams: `figma:///team/{team_id}`
-- Projects: `figma:///project/{project_id}`
 
 ## Error Handling
 
-### MCP Protocol Errors
-- `-32700`: Parse error
-- `-32600`: Invalid request
-- `-32601`: Method not found
-- `-32602`: Invalid parameters
-- `-32603`: Internal error
+The server provides detailed error messages and proper error codes:
 
-### Resource Errors
-- `100`: Resource not found
-- `101`: Resource access denied
-- `102`: Resource temporarily unavailable
+- Invalid token: 403 with specific error message
+- Rate limiting: 429 with reset time
+- Validation errors: 400 with field-specific details
+- Server errors: 500 with error tracking
 
-### Figma API Errors
-The server handles Figma API errors and maps them to appropriate MCP error codes:
+## Limitations & Known Issues
 
-- `403 Forbidden`: Maps to error code 101 (Resource access denied)
-  ```json
-  {
-    "code": 101,
-    "message": "Access to Figma resource denied",
-    "data": {
-      "figmaError": "Invalid access token"
-    }
-  }
-  ```
+### API Restrictions
 
-- `404 Not Found`: Maps to error code 100 (Resource not found)
-  ```json
-  {
-    "code": 100,
-    "message": "Figma resource not found",
-    "data": {
-      "uri": "figma:///file/invalid_key"
-    }
-  }
-  ```
+1. **Read-Only Operations**
+   - Limited to read-only operations due to Figma API restrictions
+   - Personal access tokens only support read operations, not write
+   - Cannot modify variables, components, or styles through REST API with personal tokens
+   - Write operations would require Figma plugin development instead
 
-- `429 Too Many Requests`: Maps to error code 102 (Resource temporarily unavailable)
-  ```json
-  {
-    "code": 102,
-    "message": "Figma API rate limit exceeded",
-    "data": {
-      "retryAfter": 300
-    }
-  }
-  ```
+2. **Rate Limiting**
+   - Follows Figma API rate limits
+   - Implement exponential backoff for better handling
 
-## Rate Limiting
+3. **Cache Management**
+   - Default 5-minute TTL
+   - Limited to 500 entries
+   - Consider implementing cache invalidation hooks
 
-The server implements smart rate limiting to prevent hitting Figma API limits:
+4. **Authentication**
+   - Only supports personal access tokens
+   - No support for team-level permissions or collaborative editing
+   - OAuth implementation planned for future
 
-- Default limit: 500 requests per 15 minutes
-- Automatic retry handling for rate-limited requests
-- Configurable rate limit via environment variables
-- Rate limit status endpoint: `GET /rate-limit-status`
+5. **Technical Implementation**
+   - Requires absolute paths in configuration
+   - Must compile TypeScript files before execution
+   - Requires handling both local and global module resolution
 
-Rate limit headers are included in responses:
-```http
-X-RateLimit-Limit: 500
-X-RateLimit-Remaining: 486
-X-RateLimit-Reset: 1623456789
-```
-
-## Development
-
-### Setting Up Development Environment
-
-```bash
-npm install
-npm run build
-```
-
-### Running Tests
-
-```bash
-npm test
-```
-
-### Contributing
+## Contributing
 
 1. Fork the repository
-2. Create your feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'feat: add amazing feature'`)
-4. Push to the branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
+2. Create a feature branch
+3. Make your changes with tests
+4. Submit a pull request
 
-## Current Status and Roadmap
-
-### Implemented Features
-- [x] Basic MCP server implementation
-- [x] File resource handling
-- [x] Component resource handling
-- [x] Variable resource handling
-- [x] Authentication middleware
-- [x] Rate limiting
-- [x] Error mapping
-- [x] Basic test coverage
-
-### Upcoming Features
-- [ ] WebSocket transport support (In Progress)
-- [ ] Resource change notifications
-- [ ] Caching layer implementation
-- [ ] Plugin system for custom handlers
-- [ ] Enhanced test coverage
-- [ ] Performance optimizations
-- [ ] Batch operation improvements
-- [ ] Documentation expansion
-
-## Debugging
-
-Enable debug logging by setting the DEBUG environment variable:
-
-```bash
-DEBUG=figma-mcp:* npm start
-```
-
-Debug namespaces:
-- `figma-mcp:server`: Server operations
-- `figma-mcp:handler`: Resource handlers
-- `figma-mcp:api`: Figma API calls
-- `figma-mcp:rate-limit`: Rate limiting
+Please follow our coding standards:
+- TypeScript strict mode
+- ESLint configuration
+- Jest for testing
+- Comprehensive error handling
 
 ## License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+MIT License - See LICENSE file for details
 
-## Related Resources
+## Troubleshooting
 
-- [Model Context Protocol Documentation](https://modelcontextprotocol.io)
-- [MCP Specification](https://spec.modelcontextprotocol.io)
-- [MCP TypeScript SDK](https://github.com/modelcontextprotocol/typescript-sdk)
-- [Figma API Documentation](https://www.figma.com/developers/api)
+See [TROUBLESHOOTING.md](examples/TROUBLESHOOTING.md) for a comprehensive troubleshooting guide.
+
+### Common Issues
+
+1. **JSON Connection Errors**
+   - Use absolute paths in Claude Desktop configuration
+   - Ensure the server is built (`npm run build`)
+   - Verify all environment variables are set
+
+2. **Authentication Issues**
+   - Verify your Figma access token is valid
+   - Check the token has required permissions
+   - Ensure the token is correctly set in configuration
+
+3. **Server Not Starting**
+   - Check Node.js version (18.x+ required)
+   - Verify the build exists (`dist/index.js`)
+   - Check Claude Desktop logs:
+     - macOS: `~/Library/Logs/Claude/mcp*.log`
+     - Windows: `%APPDATA%\Claude\logs\mcp*.log`
+
+For more detailed debugging steps and solutions, refer to the troubleshooting guide.
+
+## Support
+
+- GitHub Issues: [Report a bug](https://github.com/your-repo/issues)
+- Documentation: [Wiki](https://github.com/your-repo/wiki)
+- Discord: [Join our community](https://discord.gg/your-server)
